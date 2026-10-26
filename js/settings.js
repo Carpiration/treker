@@ -4,7 +4,8 @@
 function menuEntries() {
   const u = me(), waiting = state.db.users.filter(x => x.pending && !x.active).length;
   return [
-    { page: 'profile', html: `${avatar(u)}<span class="am-txt"><b>${esc(u.name)}</b><span>Профиль и вид</span></span>` },
+    { page: 'profile', html: `${avatar(u)}<span class="am-txt"><b>${esc(u.name)}</b><span>Профиль, PIN, выход</span></span>` },
+    { page: 'look', html: `${icon('palette')}<span class="am-txt"><b>Внешний вид</b><span>Фон задач, статусы</span></span>` },
     isAdmin() && { page: 'users', html: `${icon('users')}<span class="am-txt"><b>Пользователи</b><span>${waiting ? `Заявки: ${waiting}` : 'Профили и доступ'}</span></span>${waiting ? `<span class="am-badge">${waiting}</span>` : ''}` },
     { page: 'groups', html: `${icon('grid')}<span class="am-txt"><b>Группы</b><span>${isAdmin() ? 'Создать, добавить людей' : 'Где вы состоите'}</span></span>` },
     { page: 'folders', html: `${icon('folder')}<span class="am-txt"><b>Мои папки</b><span>Создать, скрыть от других</span></span>` },
@@ -40,6 +41,7 @@ $('#appMenu').addEventListener('keydown', e => {
 /* ---------- страницы настроек ---------- */
 const PAGES = {
   profile: { title: 'Профиль', build: buildProfilePage },
+  look:    { title: 'Внешний вид', build: buildLookPage },
   users:   { title: 'Пользователи', build: buildUsersPage, admin: true },
   groups:  { title: 'Группы', build: buildGroupsPage },
   folders: { title: 'Мои папки', build: buildFoldersPage },
@@ -118,12 +120,6 @@ function buildProfilePage() {
         </form>
       </details>
     </section>
-    <section class="st-sec" aria-labelledby="stViewH">
-      <h3 class="sub-h" id="stViewH">Отображение</h3>
-      <label class="switch-row"><span class="txt"><span>Показывать, чья задача</span>
-        <span class="hint">Аватар исполнителя в строке задачи группы</span></span>
-        <input type="checkbox" class="switch" role="switch" id="prefAssignee"${pref('showAssignee') ? ' checked' : ''}></label>
-    </section>
     ${dev ? `<section class="st-sec" aria-labelledby="stImpH">
       <h3 class="sub-h" id="stImpH">Перенос с этого устройства</h3>
       <p class="hint">В этом браузере остались задачи из прежней версии: ${dev.tasks.length}. Их можно один раз перенести в «Мои задачи».</p>
@@ -134,6 +130,63 @@ function buildProfilePage() {
       <button class="btn ghost danger block" type="button" id="logoutBtn">${icon('logout')}Выйти</button>
     </section>`;
 }
+
+/* ---------- внешний вид ---------- */
+function segHtml(name, value, opts) {
+  return `<div class="seg wide" role="radiogroup" aria-label="${esc(name)}">${opts.map(([v, l]) =>
+    `<button type="button" class="seg-b${v === value ? ' on' : ''}" role="radio" aria-checked="${v === value}" data-pref="${name}" data-v="${v}">${l}</button>`).join('')}</div>`;
+}
+// Предпросмотр — те же классы, что у настоящих задач (вид задаётся классами на <body>).
+function previewCards() {
+  const view = pref('statusView'), demo = [
+    ['todo', 'Купить подарки', 'Список — в заметках, бюджет до пятницы'],
+    ['doing', 'Подготовить презентацию', ''],
+    ['done', 'Созвон в 15:00', 'Итоги — в общем чате'],
+  ];
+  return demo.map(([s, title, desc], i) => {
+    const st = statusOf(s);
+    const status = view === 'hide' ? '' : view === 'dot'
+      ? `<span class="st st-ind ro" data-s="${s}" title="${st.label}"><span class="dot"></span></span>`
+      : `<span class="st ro" data-s="${s}">${statusIcon(s)}<span class="lbl">${st.label}</span></span>`;
+    return `<div class="task${s === 'done' ? ' done' : ''}" data-s="${s}" style="--ro:${i * 97 + 40}deg"><span class="t-fx" aria-hidden="true"></span>
+      <div class="t-head"><span class="t-main"><span class="t-title">${title}</span>${desc ? `<span class="t-sub">${desc}</span>` : ''}</span>
+      <div class="t-side">${status}</div></div></div>`;
+  }).join('');
+}
+function buildLookPage() {
+  const fx = pref('taskFx');
+  $('#stBody').innerHTML = `<section class="st-sec" aria-label="Предпросмотр">
+      <div class="list look-prev" aria-hidden="true">${previewCards()}</div>
+      <p class="hint">Цвет — статус: красный — не начато, жёлтый — в процессе, зелёный — готово.</p>
+    </section>
+    <section class="st-sec" aria-labelledby="lkFxH">
+      <h3 class="sub-h" id="lkFxH">Фон задач</h3>
+      ${segHtml('taskFx', fx, [['rays', 'Лучи'], ['outline', 'Обводка'], ['off', 'Выключен']])}
+      <label class="switch-row${fx === 'off' ? ' off' : ''}"><span class="txt"><span>Переливание</span>
+        <span class="hint">${fx === 'outline' ? 'По рамке бегает блик' : 'Лучи медленно поворачиваются'} (цвет не меняется)</span></span>
+        <input type="checkbox" class="switch" role="switch" id="prefAnim"${pref('fxAnim') ? ' checked' : ''}${fx === 'off' ? ' disabled' : ''}></label>
+    </section>
+    <section class="st-sec" aria-labelledby="lkStH">
+      <h3 class="sub-h" id="lkStH">Статус в строке</h3>
+      ${segHtml('statusView', pref('statusView'), [['pill', 'Метка'], ['dot', 'Индикатор'], ['hide', 'Скрыть']])}
+      <p class="hint">Статус всегда можно сменить в меню задачи: правая кнопка мыши или долгое нажатие.</p>
+    </section>
+    <section class="st-sec" aria-labelledby="lkMoreH">
+      <h3 class="sub-h" id="lkMoreH">Ещё</h3>
+      <label class="switch-row"><span class="txt"><span>Показывать, чья задача</span>
+        <span class="hint">Аватар исполнителя в строке задачи группы</span></span>
+        <input type="checkbox" class="switch" role="switch" id="prefAssignee"${pref('showAssignee') ? ' checked' : ''}></label>
+    </section>`;
+}
+function setPref(k, v) {
+  ops.patchSelf({ prefs: { ...me().prefs, [k]: v } });
+}
+$('#stBody').addEventListener('click', e => {
+  const b = e.target.closest('[data-pref]'); if (!b || b.classList.contains('on')) return;
+  const k = b.dataset.pref, v = b.dataset.v;
+  setPref(k, v);
+  $(`[data-pref="${k}"][data-v="${v}"]`)?.focus({ preventScroll: true });
+});
 
 /* ---------- пользователи (администратор) ---------- */
 function buildUsersPage() {
@@ -328,7 +381,8 @@ $('#stBody').addEventListener('click', e => {
 });
 $('#stBody').addEventListener('change', e => {
   const t = e.target;
-  if (t.id === 'prefAssignee') ops.patchSelf({ prefs: { ...me().prefs, showAssignee: t.checked } });
+  if (t.id === 'prefAssignee') setPref('showAssignee', t.checked);
+  else if (t.id === 'prefAnim') setPref('fxAnim', t.checked);
   else if (t.id === 'rootVisible') ops.patchSelf({ rootHidden: !t.checked });
   else if (t.dataset.member) {
     const u = user(t.dataset.member), g = group(t.dataset.group);

@@ -1,7 +1,15 @@
 'use strict';
 /* ---------- рендер ---------- */
+// Классы вида на <body>: действуют и на список, и на предпросмотр в настройках.
+function applyLook(p = pref) {
+  const b = document.body.classList;
+  for (const v of ['rays', 'outline', 'off']) b.toggle(`fx-${v}`, p('taskFx') === v);
+  b.toggle('fx-anim', !!p('fxAnim') && p('taskFx') !== 'off');
+  for (const v of ['pill', 'dot', 'hide']) b.toggle(`st-${v}`, p('statusView') === v);
+}
 function render(opts) {
   if (!state.me) return;
+  applyLook();
   renderTop();
   renderChips();
   renderComposerAssign();
@@ -9,27 +17,27 @@ function render(opts) {
   if ($('#settings').open) refreshSettings();
 }
 
-// Значок описания склеен с последним словом, чтобы не переносился на строку один.
-function titleHtml(t) {
-  if (!t.desc) return esc(t.title);
-  const i = t.title.lastIndexOf(' ');
-  return `${esc(t.title.slice(0, i + 1))}<span class="nowrap">${esc(t.title.slice(i + 1))}${icon('text', 'has-desc')}</span><span class="sr-only">, есть описание</span>`;
-}
 function taskHtml(t) {
   const editing = state.editing === t.id, open = openIds().has(t.id);
   const rw = taskEditable(t), inGroup = !!t.groupId;
   const showA = pref('showAssignee') && inGroup, a = user(t.assigneeId), author = user(t.authorId), s = statusOf(t.status);
-  const pill = `${statusIcon(s.id)}<span class="lbl">${s.label}</span>`;
-  const statusMenu = rw ? menuHtml({ kind: 'status', id: t.id, cls: 'st', attrs: `data-s="${s.id}"`, btn: pill, label: `Статус: ${s.label}. Изменить`,
+  const view = pref('statusView');
+  // Статус в строке: метка с текстом, цветной индикатор или ничего (меняется через меню задачи).
+  const pill = view === 'dot' ? `<span class="dot" aria-hidden="true"></span><span class="sr-only">${s.label}</span>`
+    : `${statusIcon(s.id)}<span class="lbl">${s.label}</span>`;
+  const stCls = view === 'dot' ? 'st st-ind' : 'st';
+  const statusMenu = view === 'hide' ? '' : rw ? menuHtml({ kind: 'status', id: t.id, cls: stCls, attrs: `data-s="${s.id}" title="${s.label}"`, btn: pill, label: `Статус: ${s.label}. Изменить`,
     items: STATUSES.map(x => itemHtml(x.id, `<span class="st-ic" data-s="${x.id}">${statusIcon(x.id)}</span>${x.label}`, x.id === s.id)).join('') })
-    : `<span class="st ro" data-s="${s.id}">${pill}</span>`;
+    : `<span class="${stCls} ro" data-s="${s.id}" title="${s.label}">${pill}</span>`;
   const noA = '<span class="avatar" aria-hidden="true">–</span>';
   const assignMenu = !showA ? '' : rw ? menuHtml({ kind: 'assign', id: t.id, cls: 'av-btn', btn: a ? avatar(a) : noA,
     label: `Исполнитель: ${t.assigneeId === state.me ? 'вы' : a?.name || 'нет'}. Передать задачу`, items: assigneeItems(t.groupId, t.assigneeId) })
     : `<span class="av-btn ro">${a ? avatar(a) : noA}</span>`;
   const head = editing
     ? `<textarea class="t-title-input" id="et-${t.id}" rows="1" maxlength="200" autocomplete="off" aria-label="Название задачи" aria-describedby="et-${t.id}-err">${esc(t.title)}</textarea>`
-    : `<button type="button" class="t-main" data-main="${t.id}" aria-expanded="${open}" aria-controls="tm-${t.id}"><span class="t-title">${titleHtml(t)}</span></button>`;
+    : `<button type="button" class="t-main" data-main="${t.id}" aria-expanded="${open}" aria-controls="tm-${t.id}"><span class="t-title">${esc(t.title)}</span>${
+      t.desc ? `<span class="t-sub">${esc(t.desc.replace(/\s+/g, ' ').slice(0, 240))}</span>` : ''}${
+      view === 'hide' ? `<span class="sr-only">, ${s.label}</span>` : ''}</button>`;
   const meta = [
     showA ? (a ? `Исполнитель: ${esc(a.name)}` : 'без исполнителя') : '',
     !inGroup && t.folderId && folder(t.folderId) && state.folder === 'all' ? `папка «${esc(folder(t.folderId).name)}»` : '',
@@ -57,7 +65,8 @@ function taskHtml(t) {
       </div>` : ''}`;
   const inner = `<div class="t-head">${head}<div class="t-side">${assignMenu}${statusMenu}</div></div>
     <div class="t-more" id="tm-${t.id}"><div class="t-more-in"><div class="t-pad">${more}</div></div></div>`;
-  return `<article class="task${t.status === 'done' ? ' done' : ''}${open ? ' open' : ''}${editing ? ' editing' : ''}" data-task="${t.id}">${
+  // t-fx — слой фона (лучи/переливание), --ro — свой поворот лучей у каждой задачи, чтобы карточки не были одинаковыми.
+  return `<article class="task${t.status === 'done' ? ' done' : ''}${open ? ' open' : ''}${editing ? ' editing' : ''}" data-task="${t.id}" data-s="${s.id}" style="--ro:${hue(t.id)}deg"><span class="t-fx" aria-hidden="true"></span>${
     editing ? `<form data-form="${t.id}" novalidate>${inner}</form>` : inner}</article>`;
 }
 
@@ -91,6 +100,14 @@ function renderList({ flip = true } = {}) {
   list.innerHTML = tasks.length
     ? tasks.map(taskHtml).join('')
     : `<div class="empty">${icon('inbox')}<span>${empty}</span></div>`;
+  // Строка со сменённым статусом нарисована заново: стартуем со старого цвета (до любых замеров — иначе
+  // браузер успеет посчитать новый цвет) и в следующем кадре плавно перетекаем в новый (--st анимируемое).
+  const morph = state.flash?.from && !reduced() && $(`[data-task="${state.flash.id}"]`, list);
+  if (morph) {
+    morph.style.setProperty('--st', `var(--st-${state.flash.from})`);
+    morph.getBoundingClientRect();
+    requestAnimationFrame(() => morph.style.removeProperty('--st'));
+  }
 
   const et = state.editing && $(`#et-${CSS.escape(state.editing)}`);
   if (draft && et) { et.value = draft.title; $(`#ed-${CSS.escape(state.editing)}`).value = draft.desc; }
@@ -110,10 +127,34 @@ function renderList({ flip = true } = {}) {
     });
   }
   if (state.flash) {
-    const pill = $(`[data-menu="status"][data-id="${state.flash}"] .st`, list);
+    const pill = $(`[data-menu="status"][data-id="${state.flash.id}"] .st`, list);
     if (pill && !reduced()) pill.animate([{ transform: 'scale(.9)' }, { transform: 'scale(1.05)' }, { transform: 'none' }], { duration: 260, easing: EASE });
     state.flash = null;
   }
+  for (const [id, to] of state.leaving) if (!list.querySelector(`[data-task="${id}"].leaving`)) flyAway(id, to);
+}
+
+// Завершение (или возврат из «Готовых»): вспышка цветом статуса, затем задача улетает к переключателю.
+function flyAway(id, to) {
+  const el = $(`#list [data-task="${id}"]`), seg = $(`#viewSeg [data-view="${to}"]`);
+  let done = false;
+  const finish = () => {
+    if (done) return; done = true;
+    state.leaving.delete(id);
+    render();
+    if (!reduced()) seg?.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: 360, easing: EASE });
+  };
+  if (!el || !seg || reduced()) return finish();
+  el.classList.add('leaving');
+  const r = el.getBoundingClientRect(), s = seg.getBoundingClientRect();
+  const dx = s.left + s.width / 2 - (r.left + r.width / 2), dy = s.top + s.height / 2 - (r.top + r.height / 2);
+  el.animate([
+    { transform: 'none', opacity: 1, offset: 0 },
+    { transform: 'scale(1.025)', opacity: 1, offset: .32 },
+    { transform: 'scale(1)', opacity: 1, offset: .45 },
+    { transform: `translate(${dx}px, ${dy}px) scale(.08)`, opacity: .15, offset: 1 },
+  ], { duration: 950, easing: 'cubic-bezier(.55,0,.35,1)', fill: 'forwards' }).onfinish = finish;
+  setTimeout(finish, 1200);  // в фоновой вкладке анимация может не закончиться
 }
 
 /* ---------- новая задача ---------- */
@@ -160,11 +201,13 @@ function setStatus(id, s) {
   const t = state.db.tasks.find(x => x.id === id);
   if (!t || t.status === s) return;
   const from = t.status;
-  state.flash = id;
+  state.flash = { id, from };
+  // Задача уходит из текущего списка (в «Готовые» или обратно) — сначала анимация, потом исчезает.
+  const leaves = (s === 'done') !== (from === 'done');
+  if (leaves) { state.leaving.set(id, s === 'done' ? 'done' : 'active'); closeCtx(); state.tapId = null; state.editing = null; }
   ops.patchTask(id, { status: s, doneAt: s === 'done' ? Date.now() : null });
-  // Задача ушла из текущего списка (в «Готовые» или обратно) — говорим куда, с отменой.
-  if ((s === 'done') !== (from === 'done')) toast(s === 'done' ? 'Готово — задача в «Готовых»' : 'Задача снова в «Активных»',
-    () => ops.patchTask(id, { status: from, doneAt: from === 'done' ? t.doneAt || Date.now() : null }));
+  if (leaves) toast(s === 'done' ? 'Готово — задача в «Готовых»' : 'Задача снова в «Активных»',
+    () => setStatus(id, from));
 }
 function transfer(taskId, toId) {
   if (toId === 'none') toId = null;

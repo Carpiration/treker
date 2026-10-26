@@ -49,7 +49,7 @@ function filterTasks(list, info = cur()) {
 // готовые — по времени завершения, свежие сверху.
 function visibleTasks() {
   const done = state.view === 'done';
-  return filterTasks(spaceTasks()).filter(t => (t.status === 'done') === done)
+  return filterTasks(spaceTasks()).filter(t => (t.status === 'done') === done || state.leaving.has(t.id))
     .sort((a, b) => done ? (b.doneAt || 0) - (a.doneAt || 0) : b.createdAt - a.createdAt);
 }
 const activeCount = list => list.filter(t => t.status !== 'done').length;

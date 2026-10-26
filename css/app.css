@@ -4,9 +4,10 @@
   --border:#24272c; --border-strong:#353a41; --border-hover:#474d56;
   --text:#ebecee; --muted:#a3a8b0; --faint:#868c95;
   --accent:#ff8a3d; --accent-hover:#ff9d5c; --accent-soft:rgba(255,138,61,.13); --accent-line:rgba(255,138,61,.45); --on-accent:#1b0e04;
-  --st-todo:#9aa0a9; --st-todo-bg:rgba(154,160,169,.12);
-  --st-doing:var(--accent); --st-doing-bg:var(--accent-soft);
-  --st-done:#43c98b; --st-done-bg:rgba(67,201,139,.12);
+  /* цвета статусов фиксированы: красный — не начато, жёлтый — в процессе, зелёный — готово */
+  --st-todo:#ff4d55; --st-todo-bg:rgba(255,77,85,.13);
+  --st-doing:#ffc233; --st-doing-bg:rgba(255,194,51,.13);
+  --st-done:#2fdc7a; --st-done-bg:rgba(47,220,122,.13);
   --danger:#ff6b6b; --danger-soft:rgba(255,107,107,.12);
   --r-lg:14px; --r:12px; --r-sm:8px;
   --shadow-pop:0 12px 32px rgba(0,0,0,.5),0 2px 8px rgba(0,0,0,.35);
@@ -169,7 +170,7 @@ select.input{appearance:none;padding-right:34px;cursor:pointer;background:var(--
 /* ---------- список ---------- */
 main{padding-top:2px}
 .list{display:grid;grid-template-columns:minmax(0,1fr);gap:2px}
-.task{border:1px solid transparent;border-radius:var(--r);transition:background-color var(--t) var(--ease),border-color var(--t) var(--ease)}
+.task{border:1px solid transparent;border-radius:var(--r)}
 .task:hover{background:rgba(255,255,255,.02)}
 .task.open{background:var(--surface);border-color:var(--border)}
 .task.editing{border-color:var(--accent-line)}
@@ -177,7 +178,6 @@ main{padding-top:2px}
 .t-main{flex:1;min-width:0;display:block;overflow:hidden;padding:7px 8px;border:0;border-radius:var(--r-sm);background:none;text-align:left}
 .t-title{font-weight:500;overflow-wrap:anywhere;transition:color var(--t)}
 .nowrap{white-space:nowrap}
-.has-desc{width:13px!important;height:13px!important;margin-left:6px;vertical-align:-1px;color:var(--faint)}
 .task.done .t-title{color:var(--faint);text-decoration:line-through;text-decoration-color:var(--border-hover)}
 .t-side{display:flex;align-items:center;gap:4px;flex:none}
 /* подробности: высота анимируется через grid-template-rows 0fr → 1fr */
@@ -328,6 +328,59 @@ dialog.closing::backdrop{animation:fade-out 160ms forwards}
   /* долгое нажатие открывает наше меню, а не системное выделение текста */
   .task .t-main{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 }
+
+/* ---------- вид задач: цвет статуса, лучи, обводка, переливание ----------
+   --st — цвет статуса карточки; зарегистрирован как <color>, поэтому смена статуса перетекает плавно. */
+@property --st{syntax:'<color>';inherits:true;initial-value:#888}
+@property --ra{syntax:'<angle>';inherits:false;initial-value:0deg}
+.task{--st:var(--st-todo);position:relative;isolation:isolate;transition:--st .7s var(--ease),background-color var(--t) var(--ease),border-color var(--t) var(--ease),box-shadow var(--t) var(--ease)}
+.task[data-s="doing"]{--st:var(--st-doing)}
+.task[data-s="done"]{--st:var(--st-done)}
+.t-fx{position:absolute;inset:0;z-index:-1;overflow:hidden;border-radius:inherit;pointer-events:none;container-type:inline-size}
+.t-sub{display:-webkit-box;margin-top:2px;color:var(--faint);font-size:12.5px;line-height:1.4;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.task.open .t-sub{display:none}
+
+/* карточки: «лучи» и «обводка» */
+body.fx-rays .list,body.fx-outline .list{gap:8px}
+body.fx-rays .task,body.fx-outline .task{border-radius:14px;border-color:color-mix(in srgb,var(--st) 50%,transparent);background:color-mix(in srgb,var(--st) 4%,var(--bg));box-shadow:0 0 18px -9px var(--st)}
+body.fx-rays .task:hover,body.fx-outline .task:hover{border-color:color-mix(in srgb,var(--st) 75%,transparent)}
+body.fx-rays .task.open,body.fx-outline .task.open{background:color-mix(in srgb,var(--st) 6%,var(--surface));border-color:color-mix(in srgb,var(--st) 70%,transparent)}
+body.fx-rays .t-head,body.fx-outline .t-head{min-height:54px}
+/* лучи как на картинке: веер полос из центра, по краям ярче, в центре темно; два слоя с разным шагом — неровный рисунок */
+body.fx-rays .t-fx::before{content:"";position:absolute;left:0;right:0;top:50%;height:max(100%,38cqw);translate:0 -50%;
+  background:
+    repeating-conic-gradient(from calc(var(--ra) + var(--ro,0deg)) at 50% 50%,color-mix(in srgb,var(--st) 90%,transparent) 0deg .8deg,transparent .8deg 6.1deg),
+    repeating-conic-gradient(from calc(var(--ro,0deg) * 1.7 - var(--ra) * .6) at 50% 50%,color-mix(in srgb,var(--st) 55%,transparent) 0deg 2.2deg,transparent 2.2deg 13.7deg),
+    radial-gradient(farthest-side,transparent 40%,color-mix(in srgb,var(--st) 22%,transparent));
+  -webkit-mask:radial-gradient(farthest-side,transparent 34%,rgba(0,0,0,.25) 58%,#000 100%);mask:radial-gradient(farthest-side,transparent 34%,rgba(0,0,0,.25) 58%,#000 100%);
+  opacity:.62;transition:opacity var(--t)}
+body.fx-rays .task.done .t-fx::before{opacity:.38}
+/* переливание: лучи медленно поворачиваются (меняется место, не цвет) */
+body.fx-rays.fx-anim .t-fx::before{animation:rays 48s linear infinite}
+@keyframes rays{to{--ra:360deg}}
+/* в режиме «обводка» переливание — блик, бегущий по рамке */
+body.fx-outline.fx-anim .t-fx::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1.5px;
+  background:conic-gradient(from calc(var(--ra) + var(--ro,0deg)),transparent 0 62%,var(--st) 80%,transparent 96%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);
+  animation:rays 7s linear infinite}
+
+/* завершение: вспышка цветом статуса, затем перелёт к переключателю (js: flyAway) */
+.task.leaving{z-index:30;pointer-events:none}
+.task.leaving::after{content:"";position:absolute;inset:-1px;border-radius:inherit;box-shadow:0 0 0 2px var(--st),0 0 34px 2px var(--st);animation:done-flash .9s var(--ease) forwards}
+.task.leaving .t-title{text-decoration:none}
+@keyframes done-flash{0%{opacity:0}25%{opacity:1}60%{opacity:.8}100%{opacity:0}}
+
+/* статус: цветной индикатор вместо метки */
+.st.st-ind{width:32px;padding:0;justify-content:center;background:transparent}
+.st.st-ind .dot{width:12px;height:12px;border-radius:50%;background:currentColor;box-shadow:0 0 0 3px color-mix(in srgb,currentColor 22%,transparent),0 0 10px color-mix(in srgb,currentColor 60%,transparent)}
+.st.st-ind:hover .dot{transform:scale(1.15)}
+.st .dot{transition:transform var(--t-fast) var(--ease)}
+
+/* страница «Внешний вид» */
+.seg.wide{display:flex;width:100%}
+.seg.wide .seg-b{flex:1;height:34px}
+.look-prev{pointer-events:none}
+.switch-row.off{opacity:.5}
 
 /* ---------- колокольчик ---------- */
 .bell{position:relative}

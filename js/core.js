@@ -15,7 +15,10 @@ const STATUSES = [
   { id: 'done',  label: 'Готово' },
 ];
 const ROLES = { user: 'Участник', admin: 'Администратор' };
-const PREF_DEFAULTS = { showAssignee: true };
+// Настройки вида хранятся в профиле (prefs) и одинаковы на всех устройствах человека.
+// taskFx: фон задач — 'rays' (лучи по цвету статуса), 'outline' (цветная обводка), 'off';
+// fxAnim: лёгкое переливание; statusView: статус в строке — 'pill' (метка), 'dot' (цветной индикатор), 'hide'.
+const PREF_DEFAULTS = { showAssignee: true, taskFx: 'rays', fxAnim: false, statusView: 'pill' };
 const EASE = 'cubic-bezier(.2,.8,.2,1)';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -60,7 +63,8 @@ function btnBusy(btn, busy, text) {
 let backend = null;
 const state = { db: { users: [], tasks: [], groups: [], members: [], folders: [] }, me: null,
   space: 'me', folder: 'all', who: 'all', newFolder: false, view: 'active',
-  editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: undefined, pending: false, pfOpen: null, flash: null };
+  editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: undefined, pending: false, pfOpen: null, flash: null,
+  leaving: new Map() };  // задачи, улетающие в «Готовые»/«Активные»: id → куда
 const user = id => state.db.users.find(u => u.id === id);
 const me = () => user(state.me);
 const isAdmin = () => me()?.role === 'admin';
