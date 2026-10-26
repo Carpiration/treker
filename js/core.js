@@ -58,13 +58,14 @@ function btnBusy(btn, busy, text) {
 /* ---------- состояние ---------- */
 // hoverId — подробности под курсором, kbdId — под фокусом с клавиатуры, tapId — открыты касанием.
 let backend = null;
-const state = { db: { users: [], tasks: [] }, me: null, who: 'me', editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: null, pending: false, pfOpen: null, flash: null };
+const state = { db: { users: [], tasks: [], groups: [], members: [], folders: [] }, me: null,
+  space: 'me', folder: 'all', who: 'all', newFolder: false,
+  editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: undefined, pending: false, pfOpen: null, flash: null };
 const user = id => state.db.users.find(u => u.id === id);
 const me = () => user(state.me);
 const isAdmin = () => me()?.role === 'admin';
 const activeUsers = () => state.db.users.filter(u => u.active);
 const activeAdmins = () => activeUsers().filter(u => u.role === 'admin');
-const teamOrder = () => [me(), ...activeUsers().filter(u => u.id !== state.me)].filter(Boolean);
 const pref = k => (me()?.prefs || {})[k] ?? PREF_DEFAULTS[k];
 
 /* ---------- поля форм ---------- */

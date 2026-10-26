@@ -3,45 +3,10 @@
 function render(opts) {
   if (!state.me) return;
   renderTop();
+  renderChips();
   renderComposerAssign();
   renderList(opts);
   if ($('#settings').open) refreshSettings();
-}
-
-function assigneeItems(current) {
-  return teamOrder().map(u => itemHtml(u.id, `${avatar(u)}<span class="nm">${u.id === state.me ? 'Себе' : esc(u.name)}</span>`, u.id === current)).join('');
-}
-function renderComposerAssign() {
-  if (!user(state.newAssignee)?.active) state.newAssignee = state.me;
-  const a = user(state.newAssignee);
-  $('#nAssignSlot').innerHTML = menuHtml({ kind: 'new', cls: 'av-btn', btn: `${avatar(a)}${icon('down', 'chev')}`,
-    label: `Кому: ${a.id === state.me ? 'себе' : a.name}`, items: assigneeItems(a.id) });
-}
-
-function whoLabel() {
-  if (state.who === 'me') return 'Мои задачи';
-  if (state.who === 'all') return 'Все задачи';
-  return user(state.who)?.name || '—';
-}
-function visibleTasks() {
-  const who = state.who === 'me' ? state.me : state.who;
-  return state.db.tasks.filter(t => who === 'all' || t.assigneeId === who)
-    // Стабильный порядок: активные по дате создания, готовые — вниз. Смена «Не начато» ↔ «В процессе» строку не двигает.
-    .sort((a, b) => (a.status === 'done') - (b.status === 'done') || (a.status === 'done' ? (b.doneAt || 0) - (a.doneAt || 0) : b.createdAt - a.createdAt));
-}
-function renderTop() {
-  if (!['me', 'all'].includes(state.who) && !user(state.who)?.active) state.who = 'me';
-  const label = whoLabel(), others = teamOrder().filter(u => u.id !== state.me);
-  const items = [itemHtml('me', 'Мои задачи', state.who === 'me'), itemHtml('all', 'Все задачи', state.who === 'all')]
-    .concat(others.length ? [itemHtml('-')] : [], others.map(u => itemHtml(u.id, `${avatar(u)}<span class="nm">${esc(u.name)}</span>`, state.who === u.id))).join('');
-  $('#whoSlot').innerHTML = menuHtml({ kind: 'who', cls: 'who-btn', align: 'left', items,
-    btn: `<span class="nm">${esc(label)}</span>${icon('down', 'chev')}`, label: `${label}. Выбрать, чьи задачи показать` });
-  const active = visibleTasks().filter(t => t.status !== 'done').length;
-  $('#count').innerHTML = active ? `${active}<span class="sr-only"> активных</span>` : '';
-  $('#listTitle').textContent = label;
-  const waiting = isAdmin() && state.db.users.some(u => u.pending && !u.active);
-  $('#settingsBtn').classList.toggle('has-dot', waiting);
-  $('#settingsBtn').setAttribute('aria-label', waiting ? 'Настройки и профиль — есть заявки на вход' : 'Настройки и профиль');
 }
 
 // Значок описания склеен с последним словом, чтобы не переносился на строку один.
@@ -52,17 +17,22 @@ function titleHtml(t) {
 }
 function taskHtml(t) {
   const editing = state.editing === t.id, open = openIds().has(t.id);
-  const showA = pref('showAssignee'), a = user(t.assigneeId), author = user(t.authorId), s = statusOf(t.status);
-  const statusMenu = menuHtml({ kind: 'status', id: t.id, cls: 'st', attrs: `data-s="${s.id}"`,
-    btn: `${statusIcon(s.id)}<span class="lbl">${s.label}</span>`, label: `Статус: ${s.label}. Изменить`,
-    items: STATUSES.map(x => itemHtml(x.id, `<span class="st-ic" data-s="${x.id}">${statusIcon(x.id)}</span>${x.label}`, x.id === s.id)).join('') });
-  const assignMenu = showA ? menuHtml({ kind: 'assign', id: t.id, cls: 'av-btn', btn: avatar(a),
-    label: `Исполнитель: ${t.assigneeId === state.me ? 'вы' : a?.name || '—'}. Передать задачу`, items: assigneeItems(t.assigneeId) }) : '';
+  const rw = taskEditable(t), inGroup = !!t.groupId;
+  const showA = pref('showAssignee') && inGroup, a = user(t.assigneeId), author = user(t.authorId), s = statusOf(t.status);
+  const pill = `${statusIcon(s.id)}<span class="lbl">${s.label}</span>`;
+  const statusMenu = rw ? menuHtml({ kind: 'status', id: t.id, cls: 'st', attrs: `data-s="${s.id}"`, btn: pill, label: `Статус: ${s.label}. Изменить`,
+    items: STATUSES.map(x => itemHtml(x.id, `<span class="st-ic" data-s="${x.id}">${statusIcon(x.id)}</span>${x.label}`, x.id === s.id)).join('') })
+    : `<span class="st ro" data-s="${s.id}">${pill}</span>`;
+  const noA = '<span class="avatar" aria-hidden="true">–</span>';
+  const assignMenu = !showA ? '' : rw ? menuHtml({ kind: 'assign', id: t.id, cls: 'av-btn', btn: a ? avatar(a) : noA,
+    label: `Исполнитель: ${t.assigneeId === state.me ? 'вы' : a?.name || 'нет'}. Передать задачу`, items: assigneeItems(t.groupId, t.assigneeId) })
+    : `<span class="av-btn ro">${a ? avatar(a) : noA}</span>`;
   const head = editing
     ? `<textarea class="t-title-input" id="et-${t.id}" rows="1" maxlength="200" autocomplete="off" aria-label="Название задачи" aria-describedby="et-${t.id}-err">${esc(t.title)}</textarea>`
     : `<button type="button" class="t-main" data-main="${t.id}" aria-expanded="${open}" aria-controls="tm-${t.id}"><span class="t-title">${titleHtml(t)}</span></button>`;
   const meta = [
-    showA && a ? `Исполнитель: ${esc(a.name)}` : '',
+    showA ? (a ? `Исполнитель: ${esc(a.name)}` : 'без исполнителя') : '',
+    !inGroup && t.folderId && folder(t.folderId) && state.folder === 'all' ? `папка «${esc(folder(t.folderId).name)}»` : '',
     `создал(а) ${esc(author?.name || '—')}, ${when(t.createdAt)}`,
     t.status === 'done' && t.doneAt ? `готово ${when(t.doneAt)}` : '',
   ].filter(Boolean).join(' · ');
@@ -77,10 +47,10 @@ function taskHtml(t) {
       </div>`
     : `${t.desc ? `<p class="t-desc">${esc(t.desc)}</p>` : ''}
       <div class="t-meta">${meta.charAt(0).toUpperCase() + meta.slice(1)}</div>
-      <div class="t-actions">
+      ${rw ? `<div class="t-actions">
         <button class="btn ghost sm" type="button" data-edit="${t.id}">${icon('edit')}Изменить</button>
         <button class="btn ghost sm danger" type="button" data-del="${t.id}">${icon('trash')}Удалить</button>
-      </div>`;
+      </div>` : ''}`;
   const inner = `<div class="t-head">${head}<div class="t-side">${assignMenu}${statusMenu}</div></div>
     <div class="t-more" id="tm-${t.id}"><div class="t-more-in"><div class="t-pad">${more}</div></div></div>`;
   return `<article class="task${t.status === 'done' ? ' done' : ''}${open ? ' open' : ''}${editing ? ' editing' : ''}" data-task="${t.id}">${
@@ -111,8 +81,11 @@ function renderList({ flip = true } = {}) {
   if (state.editing && !tasks.some(t => t.id === state.editing)) state.editing = null;
   const firstDone = tasks.findIndex(t => t.status === 'done');
   const doneCount = firstDone < 0 ? 0 : tasks.length - firstDone;
-  const empty = state.who === 'me' ? 'Задач нет. Добавьте первую — поле сверху.'
-    : state.who === 'all' ? 'Задач пока нет.' : `У «${esc(whoLabel())}» задач нет.`;
+  const info = cur();
+  const empty = !canWrite(info) ? 'Здесь задач нет или они скрыты.'
+    : info.kind === 'group' && state.who !== 'all' ? `У «${esc(user(state.who)?.name || '—')}» задач нет.`
+    : state.folder !== 'all' && info.kind === 'me' ? 'В папке пусто. Новая задача попадёт сюда.'
+    : 'Задач нет. Добавьте первую — поле сверху.';
   list.innerHTML = tasks.length
     ? tasks.map((t, i) => (i === firstDone ? `<div class="sep" role="presentation">Готово · ${doneCount}</div>` : '') + taskHtml(t)).join('')
     : `<div class="empty">${icon('inbox')}<span>${empty}</span></div>`;
@@ -160,13 +133,15 @@ $('#newForm').addEventListener('submit', e => {
     $('#nTitleErr').textContent = 'Напишите, что нужно сделать'; $('#nTitleErr').hidden = false;
     $('#nTitle').focus(); return;
   }
-  const assigneeId = state.newAssignee || state.me, now = Date.now();
-  const task = { id: newId(), title, desc: $('#nDesc').value.trim(), status: 'todo', assigneeId, authorId: state.me, createdAt: now, updatedAt: now, doneAt: null };
+  if (!canWrite()) return;
+  const now = Date.now(), place = newTaskPlace();
+  const task = { id: newId(), title, desc: $('#nDesc').value.trim(), status: 'todo', ...place, authorId: state.me, createdAt: now, updatedAt: now, doneAt: null };
   // Поле очищаем сразу: повторный Enter создаст новую задачу, а не дубль этой.
   $('#nTitle').value = ''; $('#nDesc').value = ''; setDescOpen(false);
-  state.newAssignee = state.me;
+  state.newAssignee = undefined;
   ops.addTasks([task]);
-  if (assigneeId !== state.me) toast(`Задача передана: ${user(assigneeId).name}`, () => ops.removeTask(task.id));
+  const to = user(place.assigneeId);
+  if (to && to.id !== state.me) toast(`Задача для ${to.name}`, () => ops.removeTask(task.id));
   $('#nTitle').focus();
 });
 $('#nTitle').addEventListener('input', () => { delete $('#cBox').dataset.invalid; $('#nTitle').removeAttribute('aria-invalid'); $('#nTitleErr').hidden = true; });
@@ -183,12 +158,13 @@ function setStatus(id, s) {
   ops.patchTask(id, { status: s, doneAt: s === 'done' ? Date.now() : null });
 }
 function transfer(taskId, toId) {
+  if (toId === 'none') toId = null;
   const t = state.db.tasks.find(x => x.id === taskId);
   if (!t || t.assigneeId === toId) return;
   const from = t.assigneeId;
   if (state.editing === taskId) saveEdit(taskId, true);
   ops.patchTask(taskId, { assigneeId: toId });
-  const msg = toId === state.me ? 'Задача теперь ваша' : `Задача передана: ${user(toId).name}`;
+  const msg = !toId ? 'Исполнитель снят' : toId === state.me ? 'Задача теперь ваша' : `Задача передана: ${user(toId).name}`;
   toast(msg, () => { if (state.db.tasks.find(x => x.id === taskId)?.assigneeId === toId) ops.patchTask(taskId, { assigneeId: from }); });
 }
 function startEdit(id) {

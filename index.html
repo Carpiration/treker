@@ -29,6 +29,10 @@
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l4-4-4-4M14 12H4"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M4 4l16 16"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1.2-3.6 3.6-5.5 6.5-5.5s5.3 1.9 6.5 5.5M16 4.8a3.5 3.5 0 0 1 0 6.4M18.5 14.8c1.4.9 2.4 2.6 3 5.2"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
   <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6z"/></symbol>
   <symbol id="s-todo" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
   <symbol id="s-doing" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 4.6a3.4 3.4 0 0 1 0 6.8z" fill="currentColor"/></symbol>
@@ -60,7 +64,8 @@
       <div id="whoSlot"></div>
       <span class="count" id="count"></span>
       <span class="net" id="net" role="status" hidden>нет сети</span>
-      <button class="icon-btn push dot-host" type="button" id="settingsBtn" aria-label="Настройки и профиль" title="Настройки"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg></button>
+      <button class="icon-btn push dot-host" type="button" id="settingsBtn" aria-label="Меню" aria-haspopup="menu" aria-expanded="false" aria-controls="appMenu" title="Меню"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg></button>
+      <div class="app-menu" id="appMenu" role="menu" aria-label="Меню" hidden></div>
     </div>
     <form class="composer" id="newForm" novalidate>
       <div class="c-box" id="cBox">
@@ -78,6 +83,7 @@
       <button class="btn primary c-add" type="submit" id="nSubmit" aria-label="Добавить задачу" title="Добавить (Enter)"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
     </form>
     <div class="field-error" id="nTitleErr" hidden></div>
+    <div class="chips" id="chips" role="toolbar" aria-label="Фильтр задач" hidden></div>
   </header>
   <main>
     <h2 class="sr-only" id="listTitle">Задачи</h2>
@@ -95,6 +101,7 @@
 
 <script src="js/core.js" defer></script>
 <script src="js/backend.js" defer></script>
+<script src="js/spaces.js" defer></script>
 <script src="js/auth.js" defer></script>
 <script src="js/menu.js" defer></script>
 <script src="js/list.js" defer></script>

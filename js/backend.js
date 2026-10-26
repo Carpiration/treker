@@ -9,11 +9,27 @@ function cloudBackend() {
   const email = login => `${loginKey(login)}@${CFG.loginDomain || 'treker.local'}`;
   const ok = ({ data, error }) => { if (error) throw error; return data; };
   const iso = ms => ms == null ? null : new Date(ms).toISOString();
-  const COLS = { id: 'id', title: 'title', desc: 'descr', status: 'status', assigneeId: 'assignee_id', authorId: 'author_id', createdAt: 'created_at', updatedAt: 'updated_at', doneAt: 'done_at' };
-  const toRow = t => Object.fromEntries(Object.entries(t).filter(([k]) => k in COLS).map(([k, v]) => [COLS[k], k.endsWith('At') ? iso(v) : v]));
+  // Поля приложения ↔ колонки базы. Даты в приложении — миллисекунды.
+  const COLS = {
+    tasks: { id: 'id', title: 'title', desc: 'descr', status: 'status', assigneeId: 'assignee_id', authorId: 'author_id',
+      groupId: 'group_id', ownerId: 'owner_id', folderId: 'folder_id', createdAt: 'created_at', updatedAt: 'updated_at', doneAt: 'done_at' },
+    profiles: { id: 'id', name: 'name', prefs: 'prefs', rootHidden: 'root_hidden' },
+    groups: { id: 'id', name: 'name', createdBy: 'created_by' },
+    group_members: { groupId: 'group_id', userId: 'user_id' },
+    folders: { id: 'id', ownerId: 'owner_id', name: 'name', hidden: 'hidden', kind: 'kind' },
+  };
+  const toRow = (table, o) => Object.fromEntries(Object.entries(o).filter(([k]) => k in COLS[table])
+    .map(([k, v]) => [COLS[table][k], k.endsWith('At') ? iso(v) : v]));
   const toTask = r => ({ id: r.id, title: r.title, desc: r.descr, status: r.status, assigneeId: r.assignee_id, authorId: r.author_id,
+    groupId: r.group_id, ownerId: r.owner_id, folderId: r.folder_id,
     createdAt: Date.parse(r.created_at), updatedAt: Date.parse(r.updated_at), doneAt: r.done_at ? Date.parse(r.done_at) : null });
-  const toUser = r => ({ id: r.id, name: r.name, login: r.login, role: r.role, active: r.active, pending: !!r.pending, prefs: r.prefs || {} });
+  const toUser = r => ({ id: r.id, name: r.name, login: r.login, role: r.role, active: r.active, pending: !!r.pending,
+    prefs: r.prefs || {}, rootHidden: !!r.root_hidden });
+  const toGroup = r => ({ id: r.id, name: r.name, createdAt: Date.parse(r.created_at) });
+  const toMember = r => ({ groupId: r.group_id, userId: r.user_id });
+  const toFolder = r => ({ id: r.id, ownerId: r.owner_id, name: r.name, hidden: r.hidden, kind: r.kind, createdAt: Date.parse(r.created_at) });
+  // Строка таблицы по ключу: { id } или составной ключ участника группы.
+  const match = (q, key) => { for (const [k, v] of Object.entries(key)) q = q.eq(k, v); return q; };
   let uid = null, chan = null;
   return {
     mode: 'cloud',
@@ -42,13 +58,18 @@ function cloudBackend() {
     },
     async logout() { uid = null; this.unsubscribe(); await sb.auth.signOut({ scope: 'local' }).catch(() => {}); },
     async reload() {
-      const [u, t] = await Promise.all([sb.from('profiles').select('*'), sb.from('tasks').select('*')]);
-      state.db = { users: ok(u).map(toUser), tasks: ok(t).map(toTask) };
+      const [u, t, g, m, f] = await Promise.all(['profiles', 'tasks', 'groups', 'group_members', 'folders'].map(x => sb.from(x).select('*')));
+      state.db = { users: ok(u).map(toUser), tasks: ok(t).map(toTask), groups: ok(g).map(toGroup), members: ok(m).map(toMember), folders: ok(f).map(toFolder) };
     },
-    async insertTasks(list) { ok(await sb.from('tasks').insert(list.map(toRow))); },
-    async updateTask(id, f) { ok(await sb.from('tasks').update(toRow(f)).eq('id', id)); },
-    async deleteTask(id) { ok(await sb.from('tasks').delete().eq('id', id)); },
-    async updateSelf(f) { ok(await sb.from('profiles').update(f).eq('id', uid)); },
+    // Общие операции: таблица, объект с полями приложения, ключ строки (в колонках базы).
+    async insert(table, list) { ok(await sb.from(table).insert([].concat(list).map(o => toRow(table, o)))); },
+    async update(table, key, f) { ok(await match(sb.from(table).update(toRow(table, f)), key)); },
+    // Возвращает удалённые строки: пустой список — правила доступа не дали удалить.
+    async remove(table, key) { return ok(await match(sb.from(table).delete(), key).select()); },
+    insertTasks(list) { return this.insert('tasks', list); },
+    updateTask(id, f) { return this.update('tasks', { id }, f); },
+    deleteTask(id) { return this.remove('tasks', { id }); },
+    updateSelf(f) { return this.update('profiles', { id: uid }, f); },
     async changePassword(oldPw, newPw) {
       const chk = await temp().auth.signInWithPassword({ email: email(user(uid).login), password: oldPw });
       if (chk.error) throw new Error(/invalid login/i.test(chk.error.message) ? 'Неверный текущий PIN' : chk.error.message);
@@ -72,6 +93,9 @@ function cloudBackend() {
       chan = sb.channel('treker-changes')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, cb)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, cb)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'groups' }, cb)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'group_members' }, cb)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'folders' }, cb)
         .subscribe();
     },
     unsubscribe() { if (chan) { sb.removeChannel(chan); chan = null; } },
@@ -89,6 +113,9 @@ function errText(e, offline = 'Нет связи с сервером — изм�
   const m = e?.message || '';
   if (/profiles_name_lower|duplicate key.*name/i.test(m)) return 'Этот ник уже занят';
   if (/profiles_nick_format/i.test(m)) return 'Ник — от 2 до 30 символов: буквы, цифры и знаки _ . -';
+  if (/groups_name_lower/i.test(m)) return 'Группа с таким названием уже есть';
+  if (/folders_owner_name/i.test(m)) return 'Папка с таким названием уже есть';
+  if (/group_members_pkey/i.test(m)) return 'Уже состоит в этой группе';
   if (!navigator.onLine || /failed to fetch|networkerror|load failed|network request failed/i.test(m)) return offline;
   return m || 'Не удалось сохранить';
 }
@@ -119,6 +146,18 @@ const ops = {
   },
   removeTask: id => commit(db => { db.tasks = db.tasks.filter(x => x.id !== id); }, () => backend.deleteTask(id)),
   patchSelf: f => commit(db => Object.assign(db.users.find(u => u.id === state.me), f), () => backend.updateSelf(f)),
+  // Группы и участники (администратор), папки (свои).
+  addGroup: g => commit(db => db.groups.push(g), () => backend.insert('groups', g)),
+  renameGroup: (id, name) => commit(db => Object.assign(db.groups.find(g => g.id === id), { name }), () => backend.update('groups', { id }, { name })),
+  removeGroup: id => commit(db => { db.groups = db.groups.filter(g => g.id !== id); db.members = db.members.filter(m => m.groupId !== id); },
+    async () => { if (!(await backend.remove('groups', { id })).length) throw new Error('В группе есть задачи — сначала перенесите или удалите их'); }),
+  addMember: (groupId, userId) => commit(db => db.members.push({ groupId, userId }), () => backend.insert('group_members', { groupId, userId })),
+  removeMember: (groupId, userId) => commit(db => { db.members = db.members.filter(m => !(m.groupId === groupId && m.userId === userId)); },
+    () => backend.remove('group_members', { group_id: groupId, user_id: userId })),
+  addFolder: f => commit(db => db.folders.push(f), () => backend.insert('folders', f)),
+  patchFolder: (id, f) => commit(db => Object.assign(db.folders.find(x => x.id === id), f), () => backend.update('folders', { id }, f)),
+  removeFolder: id => commit(db => { db.folders = db.folders.filter(f => f.id !== id); for (const t of db.tasks) if (t.folderId === id) t.folderId = null; },
+    () => backend.remove('folders', { id })),
 };
 // Изменения с других устройств и вкладок: перечитываем данные целиком (их немного) и перерисовываем.
 function remoteChanged() { clearTimeout(syncT); syncT = setTimeout(syncNow, 150); }

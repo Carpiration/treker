@@ -260,3 +260,182 @@ begin
   begin alter publication supabase_realtime add table public.tasks;    exception when duplicate_object then null; end;
   begin alter publication supabase_realtime add table public.profiles; exception when duplicate_object then null; end;
 end $$;
+
+-- =====================================================================
+-- Группы, личные папки, видимость.
+-- Пространства задач: группа (общая для её участников) или личное пространство владельца («Мои задачи»).
+-- Личные задачи лежат в корне или в папках; любую папку и корень можно скрыть от всех, включая администратора.
+
+-- ---------- таблицы ----------
+create table if not exists public.groups (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null check (char_length(trim(name)) between 1 and 40),
+  created_by uuid references public.profiles (id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists groups_name_lower_idx on public.groups (lower(name));
+
+create table if not exists public.group_members (
+  group_id uuid not null references public.groups (id) on delete cascade,
+  user_id  uuid not null references public.profiles (id) on delete cascade,
+  added_at timestamptz not null default now(),
+  primary key (group_id, user_id)
+);
+create index if not exists group_members_user_idx on public.group_members (user_id);
+
+create table if not exists public.folders (
+  id         uuid primary key default gen_random_uuid(),
+  owner_id   uuid not null references public.profiles (id) on delete cascade,
+  name       text not null check (char_length(trim(name)) between 1 and 40),
+  hidden     boolean not null default false,
+  kind       text not null default 'user' check (kind in ('user', 'transfers')),
+  created_at timestamptz not null default now()
+);
+create unique index if not exists folders_owner_name_idx on public.folders (owner_id, lower(name));
+
+alter table public.profiles add column if not exists root_hidden boolean not null default false;
+
+alter table public.tasks add column if not exists group_id  uuid references public.groups (id) on delete restrict;
+alter table public.tasks add column if not exists owner_id  uuid references public.profiles (id) on delete cascade;
+alter table public.tasks add column if not exists folder_id uuid references public.folders (id) on delete set null;
+create index if not exists tasks_group_idx on public.tasks (group_id);
+create index if not exists tasks_owner_idx on public.tasks (owner_id);
+create index if not exists tasks_folder_idx on public.tasks (folder_id);
+-- Задача ровно в одном пространстве; папка — только у личной задачи.
+do $$ begin
+  alter table public.tasks add constraint tasks_one_space check ((group_id is null) <> (owner_id is null));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table public.tasks add constraint tasks_folder_personal check (folder_id is null or group_id is null);
+exception when duplicate_object then null; end $$;
+
+-- ---------- проверки прав ----------
+create or replace function public.is_group_member(g uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_active() and exists (select 1 from public.group_members where group_id = g and user_id = auth.uid())
+$$;
+
+-- Видит ли текущий пользователь задачу.
+create or replace function public.task_visible(g uuid, o uuid, f uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select case
+    when not public.is_active() then false
+    when g is not null then public.is_admin() or public.is_group_member(g)
+    when o = auth.uid() then true
+    when f is null then not coalesce((select root_hidden from public.profiles where id = o), true)
+    else not coalesce((select hidden from public.folders where id = f), true)
+  end
+$$;
+
+-- Может ли текущий пользователь менять задачу (и класть задачу в это пространство).
+create or replace function public.task_editable(g uuid, o uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_active() and case
+    when g is not null then public.is_admin() or public.is_group_member(g)
+    else o = auth.uid()
+  end
+$$;
+
+-- ---------- целостность ----------
+-- Не больше 7 групп у одного человека.
+create or replace function public.check_group_limit() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if (select count(*) from public.group_members where user_id = new.user_id) >= 7 then
+    raise exception 'У пользователя уже 7 групп — это максимум';
+  end if;
+  return new;
+end $$;
+drop trigger if exists group_limit on public.group_members;
+create trigger group_limit before insert on public.group_members
+  for each row execute function public.check_group_limit();
+
+-- Личная задача принадлежит владельцу (он же исполнитель), папка — только своя.
+-- Исполнитель задачи группы — её участник (или никто).
+create or replace function public.check_task_space() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.group_id is null then
+    new.assignee_id := new.owner_id;
+    if new.folder_id is not null and not exists (select 1 from public.folders where id = new.folder_id and owner_id = new.owner_id) then
+      raise exception 'Папка принадлежит другому человеку';
+    end if;
+  elsif new.assignee_id is not null
+    and not exists (select 1 from public.group_members where group_id = new.group_id and user_id = new.assignee_id) then
+    raise exception 'Исполнитель не состоит в этой группе';
+  end if;
+  return new;
+end $$;
+drop trigger if exists task_space on public.tasks;
+create trigger task_space before insert or update of group_id, owner_id, folder_id, assignee_id on public.tasks
+  for each row execute function public.check_task_space();
+
+-- ---------- правила доступа (RLS) ----------
+alter table public.groups        enable row level security;
+alter table public.group_members enable row level security;
+alter table public.folders       enable row level security;
+
+drop policy if exists "groups: чтение" on public.groups;
+create policy "groups: чтение" on public.groups for select to authenticated
+  using (public.is_admin() or public.is_group_member(id));
+drop policy if exists "groups: администратор" on public.groups;
+create policy "groups: администратор" on public.groups for insert to authenticated with check (public.is_admin());
+drop policy if exists "groups: переименование" on public.groups;
+create policy "groups: переименование" on public.groups for update to authenticated
+  using (public.is_admin()) with check (public.is_admin());
+-- Удалить можно только пустую группу: задачи сначала переносят.
+drop policy if exists "groups: удаление пустой" on public.groups;
+create policy "groups: удаление пустой" on public.groups for delete to authenticated
+  using (public.is_admin() and not exists (select 1 from public.tasks t where t.group_id = groups.id));
+
+drop policy if exists "group_members: чтение" on public.group_members;
+create policy "group_members: чтение" on public.group_members for select to authenticated
+  using (public.is_admin() or public.is_group_member(group_id));
+drop policy if exists "group_members: добавление" on public.group_members;
+create policy "group_members: добавление" on public.group_members for insert to authenticated with check (public.is_admin());
+drop policy if exists "group_members: исключение" on public.group_members;
+create policy "group_members: исключение" on public.group_members for delete to authenticated using (public.is_admin());
+
+drop policy if exists "folders: чтение" on public.folders;
+create policy "folders: чтение" on public.folders for select to authenticated
+  using (owner_id = (select auth.uid()) or (public.is_active() and not hidden));
+drop policy if exists "folders: свои" on public.folders;
+create policy "folders: свои" on public.folders for all to authenticated
+  using (owner_id = (select auth.uid()) and public.is_active())
+  with check (owner_id = (select auth.uid()) and public.is_active());
+
+drop policy if exists "tasks: чтение" on public.tasks;
+create policy "tasks: чтение" on public.tasks for select to authenticated
+  using (public.task_visible(group_id, owner_id, folder_id));
+drop policy if exists "tasks: создание" on public.tasks;
+create policy "tasks: создание" on public.tasks for insert to authenticated
+  with check (public.task_editable(group_id, owner_id));
+drop policy if exists "tasks: изменение" on public.tasks;
+create policy "tasks: изменение" on public.tasks for update to authenticated
+  using (public.task_editable(group_id, owner_id)) with check (public.task_editable(group_id, owner_id));
+drop policy if exists "tasks: удаление" on public.tasks;
+create policy "tasks: удаление" on public.tasks for delete to authenticated
+  using (public.task_editable(group_id, owner_id));
+
+-- ---------- права на колонки и функции ----------
+revoke all on public.groups, public.group_members, public.folders from anon, authenticated;
+grant select, insert, delete on public.groups to authenticated;
+grant update (name) on public.groups to authenticated;
+grant select, insert, delete on public.group_members to authenticated;
+grant select, insert, delete on public.folders to authenticated;
+grant update (name, hidden) on public.folders to authenticated;
+grant update (name, prefs, root_hidden) on public.profiles to authenticated;
+grant update (title, descr, status, assignee_id, updated_at, done_at, group_id, owner_id, folder_id) on public.tasks to authenticated;
+
+revoke execute on function public.is_group_member(uuid), public.task_visible(uuid, uuid, uuid),
+  public.task_editable(uuid, uuid) from public, anon;
+grant execute on function public.is_group_member(uuid), public.task_visible(uuid, uuid, uuid),
+  public.task_editable(uuid, uuid) to authenticated;
+revoke execute on function public.check_group_limit(), public.check_task_space() from public, anon, authenticated;
+
+do $$
+begin
+  begin alter publication supabase_realtime add table public.groups;        exception when duplicate_object then null; end;
+  begin alter publication supabase_realtime add table public.group_members; exception when duplicate_object then null; end;
+  begin alter publication supabase_realtime add table public.folders;       exception when duplicate_object then null; end;
+end $$;

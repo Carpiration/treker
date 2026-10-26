@@ -73,7 +73,7 @@ $('#loginForm').addEventListener('submit', async e => {
 });
 function enter(id) {
   state.me = id;
-  Object.assign(state, { who: 'me', editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: id });
+  Object.assign(state, { space: 'me', folder: 'all', who: 'all', newFolder: false, editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: undefined });
   $('#boot').hidden = true; $('#authScreen').hidden = true; $('#app').hidden = false;
   backend.subscribe(remoteChanged);
   render({ flip: false });
@@ -82,6 +82,7 @@ function enter(id) {
 }
 async function logout(msg) {
   if (openMenu) setMenu(openMenu, false);
+  closeAppMenu();
   const d = $('#settings'); if (d.open) { d.classList.remove('closing'); d.close(); }
   state.me = null; state.editing = null;
   $$('#toasts .toast').forEach(t => t.remove());

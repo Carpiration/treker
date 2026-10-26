@@ -29,7 +29,7 @@ addEventListener('scroll', () => $('#top').classList.toggle('scrolled', scrollY 
 // N — быстро перейти к полю новой задачи.
 document.addEventListener('keydown', e => {
   if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.code !== 'KeyN') return;
-  if (!state.me || $('#settings').open || e.target.closest?.('input,textarea,select,[contenteditable]')) return;
+  if (!state.me || $('#settings').open || $('#newForm').hidden || e.target.closest?.('input,textarea,select,[contenteditable]')) return;
   e.preventDefault(); $('#nTitle').focus();
 });
 
@@ -37,6 +37,7 @@ document.addEventListener('keydown', e => {
 // Закрывает верхний открытый слой; false — закрывать нечего, приложение сворачивается.
 window.appBack = () => {
   if (openMenu) { setMenu(openMenu, false); return true; }
+  if (appMenuOpen()) { closeAppMenu(true); return true; }
   const d = $('#settings');
   if (d.open) { if (state.pfOpen) closeProfile(); else closeDlg(d); return true; }
   if (state.editing) { cancelEdit(); return true; }

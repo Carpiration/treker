@@ -6,6 +6,8 @@ function menuHtml({ kind, id = kind, btn, label, items, cls = '', attrs = '', al
     <button type="button" class="menu-btn ${cls}" ${attrs} aria-haspopup="menu" aria-expanded="false" aria-label="${esc(label)}">${btn}</button>
     <div class="menu-list" role="menu" hidden>${items}</div></div>`;
 }
+// Подпись раздела в списке (не выбирается).
+const labelHtml = text => `<div class="menu-label" role="presentation">${esc(text)}</div>`;
 function itemHtml(value, html, checked) {
   if (value === '-') return '<div class="menu-sep" role="separator"></div>';
   return `<button type="button" class="menu-item" role="menuitemradio" aria-checked="${!!checked}" data-value="${value}">${html}${checked ? `<span class="ck">${icon('check')}</span>` : ''}</button>`;
@@ -94,8 +96,8 @@ document.addEventListener('focusout', e => {
 });
 
 function onMenuPick(kind, id, value) {
-  if (kind === 'new') { state.newAssignee = value; renderComposerAssign(); $('#nTitle').focus(); }
-  else if (kind === 'who') { state.who = value; state.editing = null; state.tapId = null; render(); $('[data-menu="who"] .menu-btn')?.focus(); }
+  if (kind === 'new') { state.newAssignee = value === 'none' ? null : value; renderComposerAssign(); $('#nTitle').focus(); }
+  else if (kind === 'space') setSpace(value);
   else if (kind === 'assign') transfer(id, value);
   else if (kind === 'status') setStatus(id, value);
 }
