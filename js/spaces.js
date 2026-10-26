@@ -32,11 +32,13 @@ function canWrite(info = cur()) {
   if (info.kind === 'group') return isAdmin() || isMember(info.id);
   return false;
 }
-const taskEditable = t => t.groupId ? isAdmin() || isMember(t.groupId) : t.ownerId === state.me;
+const taskEditable = t => !t.deletedAt && (t.groupId ? isAdmin() || isMember(t.groupId) : t.ownerId === state.me);
+// Запрос на передачу задачи администратору, который ещё ждёт ответа.
+const pendingTransfer = taskId => state.db.transfers.find(x => x.taskId === taskId && x.status === 'pending');
 
 // Задачи пространства без учёта фильтра — для счётчиков.
 function spaceTasks(info = cur()) {
-  return state.db.tasks.filter(t => info.kind === 'group' ? t.groupId === info.id : !t.groupId && t.ownerId === info.id);
+  return state.db.tasks.filter(t => !t.deletedAt && (info.kind === 'group' ? t.groupId === info.id : !t.groupId && t.ownerId === info.id));
 }
 function filterTasks(list, info = cur()) {
   if (info.kind === 'group') return state.who === 'all' ? list : list.filter(t => t.assigneeId === state.who);
@@ -82,6 +84,7 @@ function renderTop() {
   const active = activeCount(visibleTasks());
   $('#count').innerHTML = active ? `${active}<span class="sr-only"> активных</span>` : '';
   $('#listTitle').textContent = label;
+  renderBell();
   const waiting = isAdmin() && state.db.users.some(u => u.pending && !u.active);
   $('#settingsBtn').classList.toggle('has-dot', waiting);
   $('#settingsBtn').setAttribute('aria-label', waiting ? 'Меню — есть заявки на вход' : 'Меню');

@@ -12,7 +12,8 @@ function cloudBackend() {
   // Поля приложения ↔ колонки базы. Даты в приложении — миллисекунды.
   const COLS = {
     tasks: { id: 'id', title: 'title', desc: 'descr', status: 'status', assigneeId: 'assignee_id', authorId: 'author_id',
-      groupId: 'group_id', ownerId: 'owner_id', folderId: 'folder_id', createdAt: 'created_at', updatedAt: 'updated_at', doneAt: 'done_at' },
+      groupId: 'group_id', ownerId: 'owner_id', folderId: 'folder_id', createdAt: 'created_at', updatedAt: 'updated_at', doneAt: 'done_at', deletedAt: 'deleted_at' },
+    notifications: { readAt: 'read_at' },
     profiles: { id: 'id', name: 'name', prefs: 'prefs', rootHidden: 'root_hidden' },
     groups: { id: 'id', name: 'name', createdBy: 'created_by' },
     group_members: { groupId: 'group_id', userId: 'user_id' },
@@ -22,7 +23,13 @@ function cloudBackend() {
     .map(([k, v]) => [COLS[table][k], k.endsWith('At') ? iso(v) : v]));
   const toTask = r => ({ id: r.id, title: r.title, desc: r.descr, status: r.status, assigneeId: r.assignee_id, authorId: r.author_id,
     groupId: r.group_id, ownerId: r.owner_id, folderId: r.folder_id,
-    createdAt: Date.parse(r.created_at), updatedAt: Date.parse(r.updated_at), doneAt: r.done_at ? Date.parse(r.done_at) : null });
+    createdAt: Date.parse(r.created_at), updatedAt: Date.parse(r.updated_at), doneAt: r.done_at ? Date.parse(r.done_at) : null,
+    deletedAt: r.deleted_at ? Date.parse(r.deleted_at) : null, deletedBy: r.deleted_by });
+  const toNote = r => ({ id: r.id, kind: r.kind, taskId: r.task_id, title: r.title, actorId: r.actor_id, data: r.data || {},
+    transferId: r.transfer_id, readAt: r.read_at ? Date.parse(r.read_at) : null, createdAt: Date.parse(r.created_at) });
+  const toTransfer = r => ({ id: r.id, taskId: r.task_id, fromId: r.from_id, toId: r.to_id, folderId: r.folder_id, status: r.status });
+  const toEvent = r => ({ id: r.id, taskId: r.task_id, title: r.title, actorId: r.actor_id, kind: r.kind, data: r.data || {},
+    groupId: r.group_id, ownerId: r.owner_id, folderId: r.folder_id, createdAt: Date.parse(r.created_at) });
   const toUser = r => ({ id: r.id, name: r.name, login: r.login, role: r.role, active: r.active, pending: !!r.pending,
     prefs: r.prefs || {}, rootHidden: !!r.root_hidden });
   const toGroup = r => ({ id: r.id, name: r.name, createdAt: Date.parse(r.created_at) });
@@ -59,13 +66,31 @@ function cloudBackend() {
     async logout() { uid = null; this.unsubscribe(); await sb.auth.signOut({ scope: 'local' }).catch(() => {}); },
     async reload() {
       const [u, t, g, m, f] = await Promise.all(['profiles', 'tasks', 'groups', 'group_members', 'folders'].map(x => sb.from(x).select('*')));
-      state.db = { users: ok(u).map(toUser), tasks: ok(t).map(toTask), groups: ok(g).map(toGroup), members: ok(m).map(toMember), folders: ok(f).map(toFolder) };
+      const [n, tr] = await Promise.all([
+        sb.from('notifications').select('*').order('created_at', { ascending: false }).limit(100),
+        sb.from('task_transfers').select('*').eq('status', 'pending'),
+      ]);
+      state.db = { users: ok(u).map(toUser), tasks: ok(t).map(toTask), groups: ok(g).map(toGroup), members: ok(m).map(toMember),
+        folders: ok(f).map(toFolder), notes: ok(n).map(toNote), transfers: ok(tr).map(toTransfer) };
     },
     // Общие операции: таблица, объект с полями приложения, ключ строки (в колонках базы).
     async insert(table, list) { ok(await sb.from(table).insert([].concat(list).map(o => toRow(table, o)))); },
     async update(table, key, f) { ok(await match(sb.from(table).update(toRow(table, f)), key)); },
     // Возвращает удалённые строки: пустой список — правила доступа не дали удалить.
     async remove(table, key) { return ok(await match(sb.from(table).delete(), key).select()); },
+    async rpc(name, args) { return ok(await sb.rpc(name, args)); },
+    // Журнал: последние события с фильтрами; before — id, с которого продолжить («Показать ещё»).
+    async loadEvents({ actor, kind, group, owner, before, limit = 100 } = {}) {
+      let q = sb.from('task_events').select('*').order('id', { ascending: false }).limit(limit);
+      if (actor) q = q.eq('actor_id', actor);
+      if (kind) q = q.in('kind', [].concat(kind));
+      if (group) q = q.eq('group_id', group);
+      if (owner) q = q.eq('owner_id', owner).is('group_id', null);
+      if (before) q = q.lt('id', before);
+      return ok(await q).map(toEvent);
+    },
+    async markRead() { ok(await sb.from('notifications').update({ read_at: new Date().toISOString() }).eq('user_id', uid).is('read_at', null)); },
+    async clearRead() { ok(await sb.from('notifications').delete().eq('user_id', uid).not('read_at', 'is', null)); },
     insertTasks(list) { return this.insert('tasks', list); },
     updateTask(id, f) { return this.update('tasks', { id }, f); },
     deleteTask(id) { return this.remove('tasks', { id }); },
@@ -96,6 +121,8 @@ function cloudBackend() {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'groups' }, cb)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'group_members' }, cb)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'folders' }, cb)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, cb)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'task_transfers' }, cb)
         .subscribe();
     },
     unsubscribe() { if (chan) { sb.removeChannel(chan); chan = null; } },
@@ -116,6 +143,7 @@ function errText(e, offline = 'Нет связи с сервером — изм�
   if (/groups_name_lower/i.test(m)) return 'Группа с таким названием уже есть';
   if (/folders_owner_name/i.test(m)) return 'Папка с таким названием уже есть';
   if (/group_members_pkey/i.test(m)) return 'Уже состоит в этой группе';
+  if (/tasks_group_id_fkey/i.test(m)) return 'В группе есть задачи (в том числе в архиве)';
   if (!navigator.onLine || /failed to fetch|networkerror|load failed|network request failed/i.test(m)) return offline;
   return m || 'Не удалось сохранить';
 }
@@ -144,7 +172,19 @@ const ops = {
     f = { ...f, updatedAt: Date.now() };
     return commit(db => { const t = db.tasks.find(x => x.id === id); if (t) Object.assign(t, f); }, () => backend.updateTask(id, f));
   },
-  removeTask: id => commit(db => { db.tasks = db.tasks.filter(x => x.id !== id); }, () => backend.deleteTask(id)),
+  // Удаление — в архив на 30 дней; восстановить может удаливший или администратор.
+  archiveTask(id) {
+    const f = { deletedAt: Date.now() };
+    return commit(db => Object.assign(db.tasks.find(x => x.id === id) || {}, f, { deletedBy: state.me }), () => backend.updateTask(id, f));
+  },
+  restoreTask: id => commit(db => Object.assign(db.tasks.find(x => x.id === id) || {}, { deletedAt: null, deletedBy: null }),
+    async () => { await backend.rpc('restore_task', { p_task: id }); await backend.reload(); }),
+  // Навсегда — только из архива. Отмена создания задачи (тост «Отменить») — тоже сюда не подходит: см. undoCreate.
+  purgeTask: id => commit(db => { db.tasks = db.tasks.filter(x => x.id !== id); }, () => backend.deleteTask(id)),
+  // Отменить только что созданную задачу: в архив, чтобы не мусорить, и сразу навсегда.
+  async undoCreate(id) { if (await ops.archiveTask(id)) return ops.purgeTask(id); },
+  markRead: () => commit(db => { for (const n of db.notes) n.readAt ||= Date.now(); }, () => backend.markRead()),
+  clearRead: () => commit(db => { db.notes = db.notes.filter(n => !n.readAt); }, () => backend.clearRead()),
   patchSelf: f => commit(db => Object.assign(db.users.find(u => u.id === state.me), f), () => backend.updateSelf(f)),
   // Группы и участники (администратор), папки (свои).
   addGroup: g => commit(db => db.groups.push(g), () => backend.insert('groups', g)),

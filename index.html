@@ -33,6 +33,11 @@
   <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1.2-3.6 3.6-5.5 6.5-5.5s5.3 1.9 6.5 5.5M16 4.8a3.5 3.5 0 0 1 0 6.4M18.5 14.8c1.4.9 2.4 2.6 3 5.2"/></symbol>
   <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
   <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-move" viewBox="0 0 24 24"><path d="M4 12h13M13 7l5 5-5 5"/><path d="M20 5v14"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></symbol>
   <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6z"/></symbol>
   <symbol id="s-todo" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
   <symbol id="s-doing" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 4.6a3.4 3.4 0 0 1 0 6.8z" fill="currentColor"/></symbol>
@@ -64,7 +69,8 @@
       <div id="whoSlot"></div>
       <span class="count" id="count"></span>
       <span class="net" id="net" role="status" hidden>нет сети</span>
-      <button class="icon-btn push dot-host" type="button" id="settingsBtn" aria-label="Меню" aria-haspopup="menu" aria-expanded="false" aria-controls="appMenu" title="Меню"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg></button>
+      <button class="icon-btn push bell" type="button" id="bellBtn" aria-label="Уведомления" title="Уведомления"><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg><span class="bell-n" aria-hidden="true"></span></button>
+      <button class="icon-btn dot-host" type="button" id="settingsBtn" aria-label="Меню" aria-haspopup="menu" aria-expanded="false" aria-controls="appMenu" title="Меню"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg></button>
       <div class="app-menu" id="appMenu" role="menu" aria-label="Меню" hidden></div>
     </div>
     <form class="composer" id="newForm" novalidate>
@@ -106,6 +112,7 @@
 <script src="js/menu.js" defer></script>
 <script src="js/list.js" defer></script>
 <script src="js/settings.js" defer></script>
+<script src="js/activity.js" defer></script>
 <script src="js/main.js" defer></script>
 </body>
 </html>

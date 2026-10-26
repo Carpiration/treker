@@ -439,3 +439,344 @@ begin
   begin alter publication supabase_realtime add table public.group_members; exception when duplicate_object then null; end;
   begin alter publication supabase_realtime add table public.folders;       exception when duplicate_object then null; end;
 end $$;
+
+
+-- =====================================================================
+-- Архив, журнал действий, уведомления, перенос и передача задач.
+-- ---------- архив: удалённые задачи хранятся 30 дней ----------
+alter table public.tasks add column if not exists deleted_at   timestamptz;
+alter table public.tasks add column if not exists deleted_by   uuid references public.profiles (id) on delete set null;
+alter table public.tasks add column if not exists purge_warned boolean not null default false;
+create index if not exists tasks_deleted_idx on public.tasks (deleted_at) where deleted_at is not null;
+
+-- ---------- журнал действий ----------
+create table if not exists public.task_events (
+  id         bigint generated always as identity primary key,
+  task_id    uuid not null,
+  title      text not null,
+  actor_id   uuid references public.profiles (id) on delete set null,
+  kind       text not null check (kind in ('created', 'status', 'assigned', 'edited', 'moved', 'deleted', 'restored',
+               'transfer_requested', 'transfer_accepted', 'transfer_declined', 'transfer_cancelled')),
+  data       jsonb not null default '{}'::jsonb,
+  group_id   uuid references public.groups (id) on delete set null,
+  owner_id   uuid references public.profiles (id) on delete cascade,
+  folder_id  uuid references public.folders (id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create index if not exists task_events_created_idx on public.task_events (created_at desc);
+create index if not exists task_events_task_idx on public.task_events (task_id);
+create index if not exists task_events_group_idx on public.task_events (group_id);
+create index if not exists task_events_owner_idx on public.task_events (owner_id);
+create index if not exists task_events_actor_idx on public.task_events (actor_id);
+
+-- ---------- уведомления ----------
+create table if not exists public.notifications (
+  id          bigint generated always as identity primary key,
+  user_id     uuid not null references public.profiles (id) on delete cascade,
+  kind        text not null check (kind in ('assigned', 'status', 'deleted', 'restored', 'moved',
+                'transfer_request', 'transfer_accepted', 'transfer_declined', 'transfer_cancelled', 'purge_soon')),
+  task_id     uuid,
+  title       text not null default '',
+  actor_id    uuid references public.profiles (id) on delete set null,
+  data        jsonb not null default '{}'::jsonb,
+  transfer_id uuid,
+  read_at     timestamptz,
+  created_at  timestamptz not null default now()
+);
+create index if not exists notifications_user_idx on public.notifications (user_id, created_at desc);
+
+-- ---------- передача задачи администратору: ждёт его согласия ----------
+create table if not exists public.task_transfers (
+  id         uuid primary key default gen_random_uuid(),
+  task_id    uuid not null references public.tasks (id) on delete cascade,
+  from_id    uuid not null references public.profiles (id) on delete cascade,
+  to_id      uuid not null references public.profiles (id) on delete cascade,
+  folder_id  uuid references public.folders (id) on delete set null,
+  status     text not null default 'pending' check (status in ('pending', 'accepted', 'declined', 'cancelled')),
+  created_at timestamptz not null default now(),
+  decided_at timestamptz
+);
+create unique index if not exists task_transfers_one_pending on public.task_transfers (task_id) where status = 'pending';
+create index if not exists task_transfers_to_idx on public.task_transfers (to_id);
+create index if not exists task_transfers_from_idx on public.task_transfers (from_id);
+
+-- ---------- удаление в архив: кто удалил, записывает база ----------
+create or replace function public.task_archive_mark() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.deleted_at is not null and old.deleted_at is null then
+    new.deleted_by := auth.uid(); new.purge_warned := false;
+  elsif new.deleted_at is null then
+    new.deleted_by := null; new.purge_warned := false;
+  end if;
+  return new;
+end $$;
+drop trigger if exists task_archive on public.tasks;
+create trigger task_archive before update of deleted_at on public.tasks
+  for each row execute function public.task_archive_mark();
+
+-- ---------- журнал и уведомления исполнителю: пишет база при любом изменении задачи ----------
+create or replace function public.notify(p_user uuid, p_kind text, p_task uuid, p_title text, p_actor uuid, p_data jsonb default '{}'::jsonb, p_transfer uuid default null)
+returns void
+language sql security definer set search_path = public as $$
+  insert into public.notifications (user_id, kind, task_id, title, actor_id, data, transfer_id)
+  select p_user, p_kind, p_task, p_title, p_actor, coalesce(p_data, '{}'::jsonb), p_transfer
+  where p_user is not null and p_user is distinct from p_actor
+    and exists (select 1 from public.profiles where id = p_user and active)
+$$;
+
+create or replace function public.log_event(t public.tasks, p_kind text, p_data jsonb default '{}'::jsonb, p_actor uuid default auth.uid())
+returns void
+language sql security definer set search_path = public as $$
+  insert into public.task_events (task_id, title, actor_id, kind, data, group_id, owner_id, folder_id)
+  values (t.id, t.title, p_actor, p_kind, coalesce(p_data, '{}'::jsonb), t.group_id, t.owner_id, t.folder_id)
+$$;
+
+create or replace function public.task_log() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  actor uuid := coalesce(auth.uid(), new.deleted_by, new.author_id);
+begin
+  if tg_op = 'INSERT' then
+    perform public.log_event(new, 'created', jsonb_build_object('assignee', new.assignee_id), actor);
+    perform public.notify(new.assignee_id, 'assigned', new.id, new.title, actor);
+    return new;
+  end if;
+  if new.deleted_at is distinct from old.deleted_at then
+    if new.deleted_at is not null then
+      perform public.log_event(new, 'deleted', '{}'::jsonb, actor);
+      perform public.notify(new.assignee_id, 'deleted', new.id, new.title, actor);
+    else
+      perform public.log_event(new, 'restored', '{}'::jsonb, actor);
+      perform public.notify(new.assignee_id, 'restored', new.id, new.title, actor);
+    end if;
+    return new;
+  end if;
+  if new.group_id is distinct from old.group_id or new.owner_id is distinct from old.owner_id or new.folder_id is distinct from old.folder_id then
+    perform public.log_event(new, 'moved', jsonb_build_object(
+      'from_group', old.group_id, 'to_group', new.group_id, 'from_owner', old.owner_id, 'to_owner', new.owner_id,
+      'from_folder', old.folder_id, 'to_folder', new.folder_id), actor);
+    if new.assignee_id is not distinct from old.assignee_id then
+      perform public.notify(new.assignee_id, 'moved', new.id, new.title, actor, jsonb_build_object('to_group', new.group_id, 'to_folder', new.folder_id));
+    end if;
+  end if;
+  if new.assignee_id is distinct from old.assignee_id then
+    -- При передаче в чужое личное пространство исполнитель меняется сам собой — в журнале достаточно «перенесена».
+    if new.owner_id is not distinct from old.owner_id then
+      perform public.log_event(new, 'assigned', jsonb_build_object('from', old.assignee_id, 'to', new.assignee_id), actor);
+    end if;
+    perform public.notify(new.assignee_id,
+      case when new.owner_id is distinct from old.owner_id then 'moved' else 'assigned' end,
+      new.id, new.title, actor, jsonb_build_object('to_group', new.group_id, 'to_folder', new.folder_id));
+  end if;
+  if new.status is distinct from old.status then
+    perform public.log_event(new, 'status', jsonb_build_object('from', old.status, 'to', new.status), actor);
+    perform public.notify(new.assignee_id, 'status', new.id, new.title, actor, jsonb_build_object('from', old.status, 'to', new.status));
+  end if;
+  if new.title is distinct from old.title or new.descr is distinct from old.descr then
+    perform public.log_event(new, 'edited', case when new.title is distinct from old.title
+      then jsonb_build_object('old_title', old.title) else '{}'::jsonb end, actor);
+  end if;
+  return new;
+end $$;
+drop trigger if exists task_log on public.tasks;
+create trigger task_log after insert or update on public.tasks
+  for each row execute function public.task_log();
+
+-- ---------- служебная папка «Переданные» ----------
+create or replace function public.transfers_folder(p_owner uuid) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare f uuid;
+begin
+  select id into f from public.folders where owner_id = p_owner and (kind = 'transfers' or lower(name) = 'переданные')
+    order by (kind = 'transfers') desc limit 1;
+  if f is null then
+    insert into public.folders (owner_id, name, kind) values (p_owner, 'Переданные', 'transfers') returning id into f;
+  end if;
+  return f;
+end $$;
+
+-- ---------- перенос задачи ----------
+-- В свою папку, в группу (участник или администратор) или другому человеку в его папку
+-- (по умолчанию — «Переданные»). Администратору — только с его согласия: создаётся запрос.
+-- Возвращает 'moved' или 'requested'.
+create or replace function public.move_task(p_task uuid, p_group uuid default null, p_owner uuid default null, p_folder uuid default null)
+returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  me  uuid := auth.uid();
+  t   public.tasks;
+  tgt public.profiles;
+  f   uuid := p_folder;
+  a   uuid;
+begin
+  select * into t from public.tasks where id = p_task for update;
+  if not found or t.deleted_at is not null or not public.task_visible(t.group_id, t.owner_id, t.folder_id)
+     or not public.task_editable(t.group_id, t.owner_id) then
+    raise exception 'Эту задачу нельзя перенести';
+  end if;
+  if exists (select 1 from public.task_transfers where task_id = p_task and status = 'pending') then
+    raise exception 'Задача уже ждёт согласия на передачу';
+  end if;
+  if (p_group is null) = (p_owner is null) then raise exception 'Не выбрано, куда перенести'; end if;
+
+  if p_group is not null then
+    if not (public.is_admin() or public.is_group_member(p_group)) then raise exception 'Вы не состоите в этой группе'; end if;
+    a := case
+      when exists (select 1 from public.group_members where group_id = p_group and user_id = t.assignee_id) then t.assignee_id
+      when exists (select 1 from public.group_members where group_id = p_group and user_id = me) then me end;
+    update public.tasks set group_id = p_group, owner_id = null, folder_id = null, assignee_id = a, updated_at = now() where id = p_task;
+    return 'moved';
+  end if;
+
+  select * into tgt from public.profiles where id = p_owner;
+  if not found or not tgt.active then raise exception 'Человек не найден или отключён'; end if;
+  if f is not null and not exists (select 1 from public.folders where id = f and owner_id = p_owner and (not hidden or owner_id = me)) then
+    raise exception 'Папка не найдена';
+  end if;
+  if p_owner = me then
+    update public.tasks set group_id = null, owner_id = me, folder_id = f, updated_at = now() where id = p_task;
+    return 'moved';
+  end if;
+  if tgt.role = 'admin' then
+    insert into public.task_transfers (task_id, from_id, to_id, folder_id) values (p_task, me, p_owner, f)
+      returning id into a;
+    perform public.log_event(t, 'transfer_requested', jsonb_build_object('to', p_owner, 'folder', f), me);
+    perform public.notify(p_owner, 'transfer_request', p_task, t.title, me, jsonb_build_object('folder', f), a);
+    return 'requested';
+  end if;
+  update public.tasks set group_id = null, owner_id = p_owner, folder_id = coalesce(f, public.transfers_folder(p_owner)), updated_at = now()
+    where id = p_task;
+  return 'moved';
+end $$;
+
+-- Ответ на передачу: принять (задача переходит в выбранную папку или «Переданные») или отклонить.
+create or replace function public.respond_transfer(p_transfer uuid, p_accept boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  tr public.task_transfers;
+  t  public.tasks;
+begin
+  select * into tr from public.task_transfers where id = p_transfer for update;
+  if not found or tr.to_id <> auth.uid() then raise exception 'Запрос не найден'; end if;
+  if tr.status <> 'pending' then raise exception 'На этот запрос уже ответили'; end if;
+  select * into t from public.tasks where id = tr.task_id;
+  if p_accept then
+    if t.deleted_at is not null then raise exception 'Задачу уже удалили'; end if;
+    update public.tasks set group_id = null, owner_id = tr.to_id,
+      folder_id = coalesce((select id from public.folders where id = tr.folder_id and owner_id = tr.to_id), public.transfers_folder(tr.to_id)),
+      updated_at = now() where id = tr.task_id;
+  end if;
+  update public.task_transfers set status = case when p_accept then 'accepted' else 'declined' end, decided_at = now() where id = p_transfer;
+  update public.notifications set read_at = coalesce(read_at, now()), data = data || jsonb_build_object('answer', case when p_accept then 'accepted' else 'declined' end)
+    where transfer_id = p_transfer and user_id = tr.to_id;
+  perform public.log_event(t, case when p_accept then 'transfer_accepted' else 'transfer_declined' end, jsonb_build_object('from', tr.from_id), tr.to_id);
+  perform public.notify(tr.from_id, case when p_accept then 'transfer_accepted' else 'transfer_declined' end, t.id, t.title, tr.to_id);
+end $$;
+
+-- Отменить свой запрос на передачу, пока на него не ответили.
+create or replace function public.cancel_transfer(p_transfer uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  tr public.task_transfers;
+  t  public.tasks;
+begin
+  select * into tr from public.task_transfers where id = p_transfer for update;
+  if not found or tr.from_id <> auth.uid() then raise exception 'Запрос не найден'; end if;
+  if tr.status <> 'pending' then raise exception 'На этот запрос уже ответили'; end if;
+  update public.task_transfers set status = 'cancelled', decided_at = now() where id = p_transfer;
+  update public.notifications set data = data || '{"answer":"cancelled"}'::jsonb where transfer_id = p_transfer;
+  select * into t from public.tasks where id = tr.task_id;
+  perform public.log_event(t, 'transfer_cancelled', jsonb_build_object('to', tr.to_id), tr.from_id);
+end $$;
+
+-- Восстановить из архива: удаливший или администратор.
+create or replace function public.restore_task(p_task uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare t public.tasks;
+begin
+  select * into t from public.tasks where id = p_task for update;
+  if not found or t.deleted_at is null then raise exception 'Задачи нет в архиве'; end if;
+  if not (t.deleted_by = auth.uid() or public.is_admin()) or not public.task_visible(t.group_id, t.owner_id, t.folder_id) then
+    raise exception 'Восстановить может удаливший или администратор';
+  end if;
+  update public.tasks set deleted_at = null, updated_at = now() where id = p_task;
+end $$;
+
+-- ---------- правила доступа ----------
+alter table public.task_events    enable row level security;
+alter table public.notifications  enable row level security;
+alter table public.task_transfers enable row level security;
+
+-- Удалённые задачи видят только удаливший и администратор (в архиве); изменить удалённую нельзя — только восстановить.
+alter policy "tasks: чтение" on public.tasks
+  using (public.task_visible(group_id, owner_id, folder_id)
+         and (deleted_at is null or deleted_by = (select auth.uid()) or public.is_admin()));
+alter policy "tasks: изменение" on public.tasks
+  using (deleted_at is null and public.task_editable(group_id, owner_id))
+  with check (public.task_editable(group_id, owner_id));
+-- Навсегда удалить можно только задачу из архива.
+alter policy "tasks: удаление" on public.tasks
+  using (deleted_at is not null and (deleted_by = (select auth.uid()) or public.is_admin())
+         and public.task_visible(group_id, owner_id, folder_id));
+
+drop policy if exists "task_events: чтение" on public.task_events;
+create policy "task_events: чтение" on public.task_events for select to authenticated
+  using (public.is_active() and (
+    actor_id = (select auth.uid())
+    or (group_id is not null and (public.is_admin() or public.is_group_member(group_id)))
+    or (group_id is null and (owner_id = (select auth.uid()) or public.task_visible(null, owner_id, folder_id)))));
+
+drop policy if exists "notifications: свои" on public.notifications;
+create policy "notifications: свои" on public.notifications for select to authenticated using (user_id = (select auth.uid()));
+drop policy if exists "notifications: прочитать" on public.notifications;
+create policy "notifications: прочитать" on public.notifications for update to authenticated
+  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+drop policy if exists "notifications: убрать" on public.notifications;
+create policy "notifications: убрать" on public.notifications for delete to authenticated using (user_id = (select auth.uid()));
+
+drop policy if exists "task_transfers: участники" on public.task_transfers;
+create policy "task_transfers: участники" on public.task_transfers for select to authenticated
+  using (from_id = (select auth.uid()) or to_id = (select auth.uid()));
+
+do $$
+begin
+  begin alter publication supabase_realtime add table public.task_events;    exception when duplicate_object then null; end;
+  begin alter publication supabase_realtime add table public.notifications;  exception when duplicate_object then null; end;
+  begin alter publication supabase_realtime add table public.task_transfers; exception when duplicate_object then null; end;
+end $$;
+
+-- ---------- права ----------
+revoke all on public.task_events, public.notifications, public.task_transfers from anon, authenticated;
+grant select on public.task_events to authenticated;
+grant select, delete on public.notifications to authenticated;
+grant update (read_at) on public.notifications to authenticated;
+grant select on public.task_transfers to authenticated;
+grant update (title, descr, status, assignee_id, updated_at, done_at, group_id, owner_id, folder_id, deleted_at) on public.tasks to authenticated;
+revoke execute on function public.move_task(uuid, uuid, uuid, uuid), public.respond_transfer(uuid, boolean),
+  public.cancel_transfer(uuid), public.restore_task(uuid) from public, anon;
+grant execute on function public.move_task(uuid, uuid, uuid, uuid), public.respond_transfer(uuid, boolean),
+  public.cancel_transfer(uuid), public.restore_task(uuid) to authenticated;
+revoke execute on function public.notify(uuid, text, uuid, text, uuid, jsonb, uuid), public.log_event(public.tasks, text, jsonb, uuid),
+  public.transfers_folder(uuid), public.task_log(), public.task_archive_mark() from public, anon, authenticated;
+
+-- ---------- обслуживание архива (pg_cron) ----------
+create extension if not exists pg_cron;
+-- За сутки до автоочистки — уведомление удалившему.
+create or replace function public.archive_warn() returns void
+language plpgsql security definer set search_path = public as $$
+declare r record;
+begin
+  for r in update public.tasks set purge_warned = true
+           where deleted_at is not null and not purge_warned and deleted_at < now() - interval '29 days'
+           returning id, title, deleted_by, deleted_at
+  loop
+    perform public.notify(r.deleted_by, 'purge_soon', r.id, r.title, null,
+      jsonb_build_object('purge_at', r.deleted_at + interval '30 days'));
+  end loop;
+end $$;
+revoke execute on function public.archive_warn() from public, anon, authenticated;
+select cron.schedule('treker-archive-warn', '7 * * * *', 'select public.archive_warn()');
+-- Каждый час: задачи старше 30 дней в архиве и уведомления старше 60 дней удаляются.
+select cron.schedule('treker-archive-purge', '17 * * * *',
+  $job$delete from public.tasks where deleted_at < now() - interval '30 days'; delete from public.notifications where created_at < now() - interval '60 days'$job$);

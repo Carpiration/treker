@@ -8,6 +8,8 @@ function menuEntries() {
     isAdmin() && { page: 'users', html: `${icon('users')}<span class="am-txt"><b>Пользователи</b><span>${waiting ? `Заявки: ${waiting}` : 'Профили и доступ'}</span></span>${waiting ? `<span class="am-badge">${waiting}</span>` : ''}` },
     { page: 'groups', html: `${icon('grid')}<span class="am-txt"><b>Группы</b><span>${isAdmin() ? 'Создать, добавить людей' : 'Где вы состоите'}</span></span>` },
     { page: 'folders', html: `${icon('folder')}<span class="am-txt"><b>Мои папки</b><span>Создать, скрыть от других</span></span>` },
+    { page: 'journal', html: `${icon('list')}<span class="am-txt"><b>Журнал</b><span>Кто что когда сделал</span></span>` },
+    { page: 'archive', html: `${icon('trash')}<span class="am-txt"><b>Архив</b><span>Удалённое хранится ${ARCHIVE_DAYS} дней</span></span>${archiveCount() ? `<span class="am-n">${archiveCount()}</span>` : ''}` },
   ].filter(Boolean);
 }
 function openAppMenu() {
@@ -41,15 +43,23 @@ const PAGES = {
   users:   { title: 'Пользователи', build: buildUsersPage, admin: true },
   groups:  { title: 'Группы', build: buildGroupsPage },
   folders: { title: 'Мои папки', build: buildFoldersPage },
+  // Страницы из activity.js (подключается позже) — через обёртки.
+  notes:   { title: 'Уведомления', build: () => buildNotesPage(), open: () => afterNotesOpen() },
+  journal: { title: 'Журнал', build: () => buildJournalPage(), open: () => loadJournal() },
+  archive: { title: 'Архив', build: () => buildArchivePage() },
+  move:    { title: 'Перенести задачу', build: () => buildMovePage() },
 };
+const archiveCount = () => state.db.tasks.filter(t => t.deletedAt).length;
 function openPage(page) {
   if (!PAGES[page] || (PAGES[page].admin && !isAdmin())) return;
   Object.assign(state, { page, pfOpen: null, gOpen: null, confirmDel: null });
+  if (page === 'notes') state.freshNotes = new Set(state.db.notes.filter(n => !n.readAt).map(n => n.id));
   $('#stH').textContent = PAGES[page].title;
   buildSettings();
   const d = $('#settings');
   if (!d.open) d.showModal();
   $('#stBody').scrollTop = 0;
+  PAGES[page].open?.();
 }
 function buildSettings() {
   if (PAGES[state.page]?.admin && !isAdmin()) state.page = 'profile';
@@ -165,7 +175,7 @@ function groupHtml(g, admin) {
       <button class="btn" type="submit">Сохранить</button></form>
     <h4>Участники</h4><div class="m-list">${people}</div>
     <div class="row-actions"><button class="btn ghost sm danger push" type="button" data-g-del="${g.id}"${tasks ? ` disabled aria-describedby="g-${g.id}-dh"` : ''}>${icon('trash')}${state.confirmDel === g.id ? 'Точно удалить?' : 'Удалить группу'}</button></div>
-    ${tasks ? `<p class="hint" id="g-${g.id}-dh">Удалить можно только пустую группу: сначала перенесите или удалите её задачи.</p>` : ''}
+    ${tasks ? `<p class="hint" id="g-${g.id}-dh">Удалить можно только пустую группу: сначала перенесите её задачи или удалите их навсегда (в том числе из архива).</p>` : ''}
   </div></div>`;
 }
 

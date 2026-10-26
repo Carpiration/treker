@@ -36,6 +36,8 @@ function taskHtml(t) {
     `создал(а) ${esc(author?.name || '—')}, ${when(t.createdAt)}`,
     t.status === 'done' && t.doneAt ? `готово ${when(t.doneAt)}` : '',
   ].filter(Boolean).join(' · ');
+  const tr = pendingTransfer(t.id);
+  const trNote = tr ? `<div class="t-wait">${icon('clock')}Ждёт согласия: ${esc(user(tr.toId)?.name || '—')}</div>` : '';
   const more = editing ? `
       <div class="field-error" id="et-${t.id}-err" hidden></div>
       <label class="sr-only" for="ed-${t.id}">Описание</label>
@@ -46,9 +48,11 @@ function taskHtml(t) {
         <button class="btn ghost sm danger push" type="button" data-del="${t.id}">${icon('trash')}Удалить</button>
       </div>`
     : `${t.desc ? `<p class="t-desc">${esc(t.desc)}</p>` : ''}
-      <div class="t-meta">${meta.charAt(0).toUpperCase() + meta.slice(1)}</div>
+      <div class="t-meta">${meta.charAt(0).toUpperCase() + meta.slice(1)}</div>${trNote}
       ${rw ? `<div class="t-actions">
         <button class="btn ghost sm" type="button" data-edit="${t.id}">${icon('edit')}Изменить</button>
+        ${tr ? `<button class="btn ghost sm" type="button" data-cancel-tr="${tr.id}">${icon('x')}Отменить передачу</button>`
+          : `<button class="btn ghost sm" type="button" data-move="${t.id}">${icon('move')}Перенести</button>`}
         <button class="btn ghost sm danger" type="button" data-del="${t.id}">${icon('trash')}Удалить</button>
       </div>` : ''}`;
   const inner = `<div class="t-head">${head}<div class="t-side">${assignMenu}${statusMenu}</div></div>
@@ -141,7 +145,7 @@ $('#newForm').addEventListener('submit', e => {
   state.newAssignee = undefined;
   ops.addTasks([task]);
   const to = user(place.assigneeId);
-  if (to && to.id !== state.me) toast(`Задача для ${to.name}`, () => ops.removeTask(task.id));
+  if (to && to.id !== state.me) toast(`Задача для ${to.name}`, () => ops.undoCreate(task.id));
   $('#nTitle').focus();
 });
 $('#nTitle').addEventListener('input', () => { delete $('#cBox').dataset.invalid; $('#nTitle').removeAttribute('aria-invalid'); $('#nTitleErr').hidden = true; });
@@ -206,10 +210,9 @@ function removeTask(id) {
     if (gone) return; gone = true;
     if (state.editing === id) state.editing = null;
     if (state.tapId === id) state.tapId = null;
-    const removed = state.db.tasks.find(x => x.id === id);
-    ops.removeTask(id);
+    ops.archiveTask(id);
     if (hadFocus) ($(`[data-main="${nextId}"]`) || $('#nTitle')).focus({ preventScroll: true });
-    if (removed) toast('Задача удалена', () => ops.addTasks([removed]));
+    toast('Задача в архиве на 30 дней', () => ops.restoreTask(id));
   };
   if (reduced()) return go();
   el.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(16px)' }], { duration: 160, easing: EASE, fill: 'forwards' }).onfinish = go;
@@ -221,6 +224,8 @@ $('#list').addEventListener('click', e => {
   if (e.target.closest('[data-menu]')) return;
   const ed = e.target.closest('[data-edit]'); if (ed) return startEdit(ed.dataset.edit);
   const del = e.target.closest('[data-del]'); if (del) return removeTask(del.dataset.del);
+  const mv = e.target.closest('[data-move]'); if (mv) return openMove(mv.dataset.move);
+  const ct = e.target.closest('[data-cancel-tr]'); if (ct) return cancelTransfer(ct.dataset.cancelTr, ct);
   if (e.target.closest('[data-cancel]')) return cancelEdit();
   const main = e.target.closest('[data-main]');
   if (main) {
