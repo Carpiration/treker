@@ -20,7 +20,7 @@ const ROLES = { user: 'Участник', admin: 'Администратор' };
 // fxAnim: лёгкое переливание; statusView: статус в строке — 'pill' (метка), 'dot' (цветной индикатор), 'hide'.
 // accent — акцентный цвет; bg* — градиентный фон: включён, сила (%), распространение (vmax), положение X/Y (%).
 const PREF_DEFAULTS = { showAssignee: true, taskFx: 'rays', fxAnim: false, statusView: 'pill',
-  accent: '#ff8a3d', bgOn: true, bgStrength: 32, bgSpread: 75, bgX: 15, bgY: 0 };
+  accent: '#ff8a3d', bgOn: true, bgStrength: 34, bgSpread: 80, bgX: 92, bgY: 0 };
 const EASE = 'cubic-bezier(.2,.8,.2,1)';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -74,7 +74,7 @@ function btnBusy(btn, busy, text) {
 /* ---------- состояние ---------- */
 // hoverId — подробности под курсором, kbdId — под фокусом с клавиатуры, tapId — открыты касанием.
 let backend = null;
-const state = { db: { users: [], tasks: [], groups: [], members: [], folders: [] }, me: null,
+const state = { db: { users: [], tasks: [], groups: [], members: [], folders: [], notes: [], transfers: [], ftransfers: [] }, me: null,
   space: 'me', folder: 'all', who: 'all', newFolder: false, view: 'active',
   editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: undefined, pending: false, pfOpen: null, flash: null,
   leaving: new Map() };  // задачи, улетающие в «Готовые»/«Активные»: id → куда

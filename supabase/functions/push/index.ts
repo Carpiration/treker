@@ -33,6 +33,15 @@ async function config(): Promise<Config> {
 const LABEL: Record<string, string> = { todo: 'Не начато', doing: 'В процессе', done: 'Готово' };
 function message(n: any, actor: string) {
   const t = `«${n.title}»`, d = n.data || {};
+  if (d.folder) {
+    const c = d.count != null ? ` (задач: ${d.count})` : '';
+    switch (n.kind) {
+      case 'moved': return { title: 'Папка передана вам', body: `${actor} передал(а) вам папку ${t}${c}` };
+      case 'transfer_request': return { title: 'Запрос на передачу папки', body: `${actor} хочет передать вам папку ${t}${c}. Откройте, чтобы принять или отклонить.` };
+      case 'transfer_accepted': return { title: 'Передача принята', body: `${actor} принял(а) вашу папку ${t}` };
+      case 'transfer_declined': return { title: 'Передача отклонена', body: `${actor} отклонил(а) папку ${t} — она осталась у вас` };
+    }
+  }
   switch (n.kind) {
     case 'assigned': return { title: 'Новая задача', body: `${actor} назначил(а) вам ${t}` };
     case 'status': return { title: `Статус: ${LABEL[d.to] || d.to}`, body: `${actor} изменил(а) статус ${t}` };

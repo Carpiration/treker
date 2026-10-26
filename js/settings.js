@@ -50,6 +50,7 @@ const PAGES = {
   journal: { title: 'Журнал', build: () => buildJournalPage(), open: () => loadJournal() },
   archive: { title: 'Архив', build: () => buildArchivePage() },
   move:    { title: 'Перенести задачу', build: () => buildMovePage() },
+  give:    { title: 'Передать папку', build: () => buildGivePage() },
 };
 const archiveCount = () => state.db.tasks.filter(t => t.deletedAt).length;
 function openPage(page) {

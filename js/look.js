@@ -20,8 +20,7 @@ function applyAccentBg(p = pref) {
   root.setProperty('--bg-x', `${clamp(p('bgX'), 0, 100)}%`);
   root.setProperty('--bg-y', `${clamp(p('bgY'), 0, 100)}%`);
   root.setProperty('--bg-s', `${clamp(p('bgStrength'), 0, 80)}%`);
-  root.setProperty('--bg-r', `${clamp(p('bgSpread'), 20, 160)}vmax`);
-  root.setProperty('--bg-rn', clamp(p('bgSpread'), 20, 160));  // то же число — для мини-экрана в настройках
+  root.setProperty('--bg-rn', clamp(p('bgSpread'), 20, 160));  // распространение: размер свечения (в CSS — от ширины и высоты экрана)
   document.body.classList.toggle('bg-off', !p('bgOn'));
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#0d0e10');
 }

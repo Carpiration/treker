@@ -66,12 +66,14 @@ function cloudBackend() {
     async logout() { uid = null; this.unsubscribe(); await sb.auth.signOut({ scope: 'local' }).catch(() => {}); },
     async reload() {
       const [u, t, g, m, f] = await Promise.all(['profiles', 'tasks', 'groups', 'group_members', 'folders'].map(x => sb.from(x).select('*')));
-      const [n, tr] = await Promise.all([
+      const [n, tr, ft] = await Promise.all([
         sb.from('notifications').select('*').order('created_at', { ascending: false }).limit(100),
         sb.from('task_transfers').select('*').eq('status', 'pending'),
+        sb.from('folder_transfers').select('*').eq('status', 'pending'),
       ]);
       state.db = { users: ok(u).map(toUser), tasks: ok(t).map(toTask), groups: ok(g).map(toGroup), members: ok(m).map(toMember),
-        folders: ok(f).map(toFolder), notes: ok(n).map(toNote), transfers: ok(tr).map(toTransfer) };
+        folders: ok(f).map(toFolder), notes: ok(n).map(toNote), transfers: ok(tr).map(toTransfer),
+        ftransfers: ok(ft).map(r => ({ id: r.id, folderId: r.folder_id, fromId: r.from_id, toId: r.to_id, name: r.name, status: r.status })) };
     },
     // Общие операции: таблица, объект с полями приложения, ключ строки (в колонках базы).
     async insert(table, list) { ok(await sb.from(table).insert([].concat(list).map(o => toRow(table, o)))); },
@@ -137,6 +139,7 @@ function cloudBackend() {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'folders' }, cb)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, cb)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'task_transfers' }, cb)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'folder_transfers' }, cb)
         .subscribe();
     },
     unsubscribe() { if (chan) { sb.removeChannel(chan); chan = null; } },

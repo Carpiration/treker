@@ -878,3 +878,154 @@ revoke execute on function public.push_notify() from public, anon, authenticated
 drop trigger if exists notifications_push on public.notifications;
 create trigger notifications_push after insert on public.notifications
   for each row execute function public.push_notify();
+
+-- =====================================================================
+-- Передача папки целиком (со всеми задачами). Админу — только с его согласия.
+create table if not exists public.folder_transfers (
+  id         uuid primary key default gen_random_uuid(),
+  folder_id  uuid not null references public.folders (id) on delete cascade,
+  from_id    uuid not null references public.profiles (id) on delete cascade,
+  to_id      uuid not null references public.profiles (id) on delete cascade,
+  name       text not null,
+  status     text not null default 'pending' check (status in ('pending', 'accepted', 'declined', 'cancelled')),
+  created_at timestamptz not null default now(),
+  decided_at timestamptz
+);
+create unique index if not exists folder_transfers_one_pending on public.folder_transfers (folder_id) where status = 'pending';
+alter table public.folder_transfers enable row level security;
+revoke all on public.folder_transfers from anon, authenticated;
+grant select on public.folder_transfers to authenticated;
+drop policy if exists "folder_transfers: участники" on public.folder_transfers;
+create policy "folder_transfers: участники" on public.folder_transfers for select to authenticated
+  using (from_id = (select auth.uid()) or to_id = (select auth.uid()));
+do $$ begin
+  begin alter publication supabase_realtime add table public.folder_transfers; exception when duplicate_object then null; end;
+end $$;
+
+-- Массовые изменения (перенос папки) не шлют уведомление на каждую задачу — только одно на папку.
+create or replace function public.notify(p_user uuid, p_kind text, p_task uuid, p_title text, p_actor uuid,
+  p_data jsonb default '{}'::jsonb, p_transfer uuid default null) returns void
+language sql security definer set search_path = public as $$
+  insert into public.notifications (user_id, kind, task_id, title, actor_id, data, transfer_id)
+  select p_user, p_kind, p_task, p_title, p_actor, coalesce(p_data, '{}'::jsonb), p_transfer
+  where p_user is not null and p_user is distinct from p_actor
+    and coalesce(current_setting('treker.bulk', true), '') <> 'on'
+    and exists (select 1 from public.profiles where id = p_user and active)
+$$;
+
+create or replace function public.do_transfer_folder(p_folder uuid, p_to uuid, p_from uuid) returns integer
+language plpgsql security definer set search_path = public as $$
+declare
+  base text; nm text; i int := 1; n int;
+begin
+  select name into base from public.folders where id = p_folder;
+  nm := base;
+  while exists (select 1 from public.folders where owner_id = p_to and lower(name) = lower(nm)) loop
+    i := i + 1; nm := left(base, 34) || ' (' || i || ')';
+  end loop;
+  perform set_config('treker.bulk', 'on', true);
+  update public.folders set owner_id = p_to, name = nm, hidden = false, kind = 'user' where id = p_folder;
+  update public.tasks set owner_id = p_to, updated_at = now() where folder_id = p_folder and group_id is null;
+  get diagnostics n = row_count;
+  perform set_config('treker.bulk', 'off', true);
+  perform public.notify(p_to, 'moved', null, nm, p_from, jsonb_build_object('folder', true, 'count', n));
+  return n;
+end $$;
+revoke execute on function public.do_transfer_folder(uuid, uuid, uuid) from public, anon, authenticated;
+
+create or replace function public.transfer_folder(p_folder uuid, p_to uuid) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  me   uuid := auth.uid();
+  f    public.folders;
+  tgt  public.profiles;
+  v_id uuid;
+  n    int;
+begin
+  select * into f from public.folders where id = p_folder for update;
+  if not found or f.owner_id <> me or not public.is_active() then raise exception 'Папка не найдена'; end if;
+  select * into tgt from public.profiles where id = p_to;
+  if not found or not tgt.active or p_to = me then raise exception 'Человек не найден или отключён'; end if;
+  if exists (select 1 from public.folder_transfers where folder_id = p_folder and status = 'pending') then
+    raise exception 'Папка уже ждёт согласия на передачу';
+  end if;
+  if exists (select 1 from public.task_transfers tt join public.tasks t on t.id = tt.task_id where t.folder_id = p_folder and tt.status = 'pending') then
+    raise exception 'В папке есть задачи, которые ждут согласия на передачу';
+  end if;
+  if tgt.role = 'admin' then
+    insert into public.folder_transfers (folder_id, from_id, to_id, name) values (p_folder, me, p_to, f.name) returning id into v_id;
+    select count(*) into n from public.tasks where folder_id = p_folder and deleted_at is null;
+    perform public.notify(p_to, 'transfer_request', null, f.name, me, jsonb_build_object('folder', true, 'count', n), v_id);
+    return 'requested';
+  end if;
+  perform public.do_transfer_folder(p_folder, p_to, me);
+  return 'moved';
+end $$;
+revoke execute on function public.transfer_folder(uuid, uuid) from public, anon;
+grant execute on function public.transfer_folder(uuid, uuid) to authenticated;
+
+-- Ответ и отмена работают и для задач, и для папок.
+create or replace function public.respond_transfer(p_transfer uuid, p_accept boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  tr public.task_transfers;
+  ft public.folder_transfers;
+  t  public.tasks;
+  fname text;
+  ans text := case when p_accept then 'accepted' else 'declined' end;
+begin
+  select * into tr from public.task_transfers where id = p_transfer for update;
+  if not found then
+    select * into ft from public.folder_transfers where id = p_transfer for update;
+    if not found or ft.to_id <> auth.uid() then raise exception 'Запрос не найден'; end if;
+    if ft.status <> 'pending' then raise exception 'На этот запрос уже ответили'; end if;
+    select name into fname from public.folders where id = ft.folder_id;
+    if p_accept then
+      if fname is null then raise exception 'Папку уже удалили'; end if;
+      perform public.do_transfer_folder(ft.folder_id, ft.to_id, ft.from_id);
+    end if;
+    update public.folder_transfers set status = ans, decided_at = now() where id = p_transfer;
+    update public.notifications set read_at = coalesce(read_at, now()), data = data || jsonb_build_object('answer', ans)
+      where transfer_id = p_transfer and user_id = ft.to_id;
+    perform public.notify(ft.from_id, 'transfer_' || ans, null, coalesce(fname, ft.name), ft.to_id, '{"folder":true}'::jsonb);
+    return;
+  end if;
+  if tr.to_id <> auth.uid() then raise exception 'Запрос не найден'; end if;
+  if tr.status <> 'pending' then raise exception 'На этот запрос уже ответили'; end if;
+  select * into t from public.tasks where id = tr.task_id;
+  if p_accept then
+    if t.deleted_at is not null then raise exception 'Задачу уже удалили'; end if;
+    update public.tasks set group_id = null, owner_id = tr.to_id,
+      folder_id = coalesce((select id from public.folders where id = tr.folder_id and owner_id = tr.to_id), public.transfers_folder(tr.to_id)),
+      updated_at = now() where id = tr.task_id;
+  end if;
+  update public.task_transfers set status = ans, decided_at = now() where id = p_transfer;
+  update public.notifications set read_at = coalesce(read_at, now()), data = data || jsonb_build_object('answer', ans)
+    where transfer_id = p_transfer and user_id = tr.to_id;
+  perform public.log_event(t, 'transfer_' || ans, jsonb_build_object('from', tr.from_id), tr.to_id);
+  perform public.notify(tr.from_id, 'transfer_' || ans, t.id, t.title, tr.to_id);
+end $$;
+
+create or replace function public.cancel_transfer(p_transfer uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  tr public.task_transfers;
+  ft public.folder_transfers;
+  t  public.tasks;
+begin
+  select * into tr from public.task_transfers where id = p_transfer for update;
+  if not found then
+    select * into ft from public.folder_transfers where id = p_transfer for update;
+    if not found or ft.from_id <> auth.uid() then raise exception 'Запрос не найден'; end if;
+    if ft.status <> 'pending' then raise exception 'На этот запрос уже ответили'; end if;
+    update public.folder_transfers set status = 'cancelled', decided_at = now() where id = p_transfer;
+    update public.notifications set data = data || '{"answer":"cancelled"}'::jsonb where transfer_id = p_transfer;
+    return;
+  end if;
+  if tr.from_id <> auth.uid() then raise exception 'Запрос не найден'; end if;
+  if tr.status <> 'pending' then raise exception 'На этот запрос уже ответили'; end if;
+  update public.task_transfers set status = 'cancelled', decided_at = now() where id = p_transfer;
+  update public.notifications set data = data || '{"answer":"cancelled"}'::jsonb where transfer_id = p_transfer;
+  select * into t from public.tasks where id = tr.task_id;
+  perform public.log_event(t, 'transfer_cancelled', jsonb_build_object('to', tr.to_id), tr.from_id);
+end $$;

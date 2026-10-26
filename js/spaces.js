@@ -96,36 +96,106 @@ function renderTop() {
   $('#app').classList.toggle('readonly', !w);
 }
 
-/* ---------- полоса фильтров: папки или исполнители ---------- */
-function chipHtml(value, html, on, extra = '') {
-  return `<button type="button" class="chip${on ? ' on' : ''}" data-chip="${value}" aria-pressed="${on}" ${extra}>${html}</button>`;
+/* ---------- выбор папки (в личных задачах) или исполнителя (в группе) ----------
+   На экране — одна кнопка с текущим выбором («Все ▾»). По нажатию — список: папки с количеством задач,
+   глаз — скрыть папку от других, «Новая папка». Удержание или правая кнопка на папке — её меню
+   (переименовать, скрыть, передать целиком, удалить). В группе в списке — люди со счётчиками. */
+const pendingFolderTransfer = fid => state.db.ftransfers.find(x => x.folderId === fid && x.status === 'pending');
+function filterOptions(info = cur()) {
+  const all = spaceTasks(info), n = list => activeCount(list);
+  if (info.kind === 'group') {
+    return [{ v: 'all', label: 'Все', icon: icon('users'), count: n(all) }]
+      .concat(groupMembers(info.id).map(u => ({ v: u.id, label: u.id === state.me ? 'Мои' : u.name, icon: avatar(u), count: n(all.filter(t => t.assigneeId === u.id)) })));
+  }
+  const own = info.kind === 'me', owner = own ? me() : info.user;
+  const opts = [{ v: 'all', label: 'Все', icon: icon('list'), count: n(all) }];
+  if (own || !owner.rootHidden) opts.push({ v: 'root', label: 'Без папки', icon: icon('inbox'), count: n(all.filter(t => !t.folderId)), eye: own ? 'root' : null, hidden: own && owner.rootHidden });
+  for (const f of userFolders(info.id)) opts.push({ v: f.id, label: f.name, icon: icon('folder'), count: n(all.filter(t => t.folderId === f.id)),
+    eye: own ? f.id : null, hidden: f.hidden, folder: own ? f.id : null, wait: own && pendingFolderTransfer(f.id) });
+  return opts;
 }
 function renderChips() {
-  const info = cur(), all = spaceTasks(info), box = $('#chips');
-  const cnt = () => '';  // числа — только в выпадающих списках (шапка, исполнитель), не на главном экране
-  let html = '';
-  if (info.kind === 'group') {
-    const members = groupMembers(info.id);
-    html = chipHtml('all', `Все${cnt(all)}`, state.who === 'all')
-      + members.map(u => chipHtml(u.id, `${avatar(u)}<span class="nm">${u.id === state.me ? 'Мои' : esc(u.name)}</span>${cnt(all.filter(t => t.assigneeId === u.id))}`, state.who === u.id)).join('');
-  } else {
-    const own = info.kind === 'me';
-    const folders = userFolders(info.id);
-    const showRoot = own || !info.user.rootHidden;
-    if (folders.length || own) {
-      html = chipHtml('all', `Все${cnt(all)}`, state.folder === 'all')
-        + (showRoot && folders.length ? chipHtml('root', `${own && me().rootHidden ? icon('eye-off', 'c-ic') : ''}Без папки${cnt(all.filter(t => !t.folderId))}`, state.folder === 'root') : '')
-        + folders.map(f => chipHtml(f.id, `${f.hidden ? icon('eye-off', 'c-ic') : icon('folder', 'c-ic')}<span class="nm">${esc(f.name)}</span>${cnt(all.filter(t => t.folderId === f.id))}`, state.folder === f.id,
-          f.hidden ? 'title="Скрыта от других"' : '')).join('')
-        + (own ? (state.newFolder
-          ? `<form class="chip-form" id="folderForm" novalidate><input class="chip-input" id="folderName" maxlength="40" placeholder="Название папки" aria-label="Название новой папки" autocomplete="off"></form>`
-          : `<button type="button" class="chip add" data-new-folder aria-label="Новая папка" title="Новая папка">${icon('plus')}</button>`) : '');
-    }
-  }
-  box.innerHTML = html;
-  box.hidden = !html;
+  const info = cur(), box = $('#chips'), opts = filterOptions(info);
+  const value = info.kind === 'group' ? state.who : state.folder;
+  const curOpt = opts.find(o => o.v === value) || opts[0];
+  const own = info.kind === 'me';
+  // Одна «Все» без папок у чужого человека — выбирать нечего.
+  if (!own && info.kind !== 'group' && opts.length < 2) { box.innerHTML = ''; box.hidden = true; state.fpOpen = false; return; }
+  const rows = opts.map(o => `<div class="fp-row${o.v === value ? ' on' : ''}${o.hidden ? ' hid' : ''}"${o.folder ? ` data-folder="${o.folder}"` : o.eye === 'root' ? ' data-folder="root"' : ''}>
+      <button type="button" class="fp-item" role="option" aria-selected="${o.v === value}" data-pick="${o.v}">
+        <span class="fp-ic">${o.icon}</span><span class="nm">${esc(o.label)}</span>${o.wait ? `<span class="fp-wait" title="Ждёт согласия на передачу">${icon('clock')}</span>` : ''}
+        ${o.count ? `<span class="m-cnt" title="Активных задач">${o.count}</span>` : ''}</button>
+      ${o.eye ? `<button type="button" class="fp-eye" data-eye="${o.eye}" aria-pressed="${!o.hidden}" aria-label="${o.hidden ? 'Скрыта от других — показать' : 'Видна другим — скрыть'}" title="${o.hidden ? 'Скрыта от других' : 'Видна другим'}">${icon(o.hidden ? 'eye-off' : 'eye')}</button>` : ''}
+    </div>`).join('');
+  const add = own ? (state.newFolder
+    ? `<form class="fp-new" id="folderForm" novalidate><input class="input" id="folderName" maxlength="40" placeholder="Название папки" aria-label="Название новой папки" autocomplete="off"><button class="btn primary sm" type="submit">Создать</button></form>`
+    : `<button type="button" class="fp-add" data-new-folder>${icon('plus')}Новая папка</button>`) : '';
+  const hint = own ? `<p class="fp-hint">Удерживайте папку (или правая кнопка мыши) — переименовать, передать целиком, удалить</p>` : '';
+  const btnLabel = info.kind === 'group' ? (value === 'all' ? 'Все' : curOpt.label) : curOpt.label;
+  box.innerHTML = `<button type="button" class="fbtn" id="fpBtn" aria-haspopup="listbox" aria-expanded="${!!state.fpOpen}" aria-controls="fpPanel">
+      <span class="fp-ic">${curOpt.icon}</span><span class="nm">${esc(btnLabel)}</span>${icon('down', 'chev')}</button>
+    <div class="fpanel" id="fpPanel" role="listbox" aria-label="${info.kind === 'group' ? 'Чьи задачи' : 'Папка'}"${state.fpOpen ? '' : ' hidden'}>${rows}${add}${hint}</div>`;
+  box.hidden = false;
+  placePicker();
   if (state.newFolder) $('#folderName')?.focus();
 }
+// Панель не должна вылезать за правый край экрана.
+function placePicker() {
+  const pn = $('#fpPanel');
+  if (!pn || pn.hidden) return;
+  // offsetWidth, а не getBoundingClientRect: во время анимации появления панель чуть уменьшена.
+  const gut = Math.min(20, Math.max(10, innerWidth * .04));
+  const over = pn.offsetParent.getBoundingClientRect().left + pn.offsetWidth - (document.documentElement.clientWidth - gut);
+  pn.style.left = over > 0 ? -over + 'px' : '0px';
+}
+addEventListener('resize', placePicker);
+function setPicker(open, focusBtn) {
+  if (!!state.fpOpen === open) return;
+  state.fpOpen = open;
+  if (!open) state.newFolder = false;
+  renderChips();
+  if (open && !state.newFolder) ($('#fpPanel .fp-row.on .fp-item') || $('#fpPanel .fp-item'))?.focus({ preventScroll: true });
+  if (!open && focusBtn) $('#fpBtn')?.focus();
+}
+$('#chips').addEventListener('click', e => {
+  if (e.target.closest('#fpBtn')) return setPicker(!state.fpOpen);
+  if (e.target.closest('[data-new-folder]')) { state.newFolder = true; renderChips(); return; }
+  const eye = e.target.closest('[data-eye]');
+  if (eye) {
+    const v = eye.dataset.eye;
+    if (v === 'root') ops.patchSelf({ rootHidden: !me().rootHidden }).then(okk => okk && toast(me().rootHidden ? 'Задачи без папки скрыты от других' : 'Задачи без папки видны другим'));
+    else { const f = folder(v); ops.patchFolder(v, { hidden: !f.hidden }).then(okk => okk && toast(f.hidden ? `«${f.name}» скрыта от всех` : `«${f.name}» видна другим`)); }
+    return;
+  }
+  const it = e.target.closest('[data-pick]'); if (!it) return;
+  const v = it.dataset.pick, info = cur();
+  if (info.kind === 'group') { state.who = v; state.newAssignee = undefined; } else state.folder = v;
+  state.editing = null; state.tapId = null; state.fpOpen = false; state.newFolder = false;
+  render();
+  $('#fpBtn')?.focus({ preventScroll: true });
+});
+$('#chips').addEventListener('keydown', e => {
+  if (e.target.id === 'folderName' && e.key === 'Escape') { e.preventDefault(); state.newFolder = false; renderChips(); $('[data-new-folder]')?.focus(); return; }
+  if (!state.fpOpen) { if (e.target.id === 'fpBtn' && e.key === 'ArrowDown') { e.preventDefault(); setPicker(true); } return; }
+  if (e.key === 'Escape') { e.preventDefault(); setPicker(false, true); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const items = $$('#fpPanel .fp-item, #fpPanel .fp-add'), i = items.indexOf(document.activeElement);
+    e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+  }
+});
+// Клик или касание мимо списка — закрыть.
+document.addEventListener('pointerdown', e => { if (state.fpOpen && !e.target.closest('#chips') && !e.target.closest('#ctx')) setPicker(false); });
+function createFolder(name) {
+  name = name.trim();
+  state.newFolder = false;
+  if (!name) { renderChips(); return; }
+  if (userFolders(state.me).some(f => f.name.toLowerCase() === name.toLowerCase())) { toast('Папка с таким названием уже есть'); renderChips(); return; }
+  const f = { id: newId(), ownerId: state.me, name, hidden: false, kind: 'user', createdAt: Date.now() };
+  state.folder = f.id; state.fpOpen = false;
+  ops.addFolder(f).then(okk => okk && toast(`Папка «${name}» создана`));
+}
+$('#chips').addEventListener('submit', e => { if (e.target.id !== 'folderForm') return; e.preventDefault(); createFolder($('#folderName').value); });
+
 $('#viewSeg').addEventListener('click', e => {
   const b = e.target.closest('[data-view]'); if (!b || b.dataset.view === state.view) return;
   state.view = b.dataset.view; state.editing = null; state.tapId = null;
@@ -135,28 +205,6 @@ $('#viewSeg').addEventListener('keydown', e => {
   if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
   e.preventDefault(); state.view = state.view === 'done' ? 'active' : 'done'; render(); $('#viewSeg .seg-b.on').focus();
 });
-$('#chips').addEventListener('click', e => {
-  if (e.target.closest('[data-new-folder]')) { state.newFolder = true; renderChips(); return; }
-  const c = e.target.closest('[data-chip]'); if (!c) return;
-  const v = c.dataset.chip, info = cur();
-  if (info.kind === 'group') { state.who = v; state.newAssignee = undefined; } else state.folder = v;
-  state.editing = null; state.tapId = null;
-  render();
-  $(`[data-chip="${v}"]`)?.focus({ preventScroll: true });
-});
-function createFolder(name) {
-  name = name.trim();
-  state.newFolder = false;
-  if (!name) { renderChips(); return; }
-  if (userFolders(state.me).some(f => f.name.toLowerCase() === name.toLowerCase())) { toast('Папка с таким названием уже есть'); renderChips(); return; }
-  const f = { id: newId(), ownerId: state.me, name, hidden: false, kind: 'user', createdAt: Date.now() };
-  state.folder = f.id;
-  ops.addFolder(f);
-}
-$('#chips').addEventListener('submit', e => { if (e.target.id !== 'folderForm') return; e.preventDefault(); createFolder($('#folderName').value); });
-$('#chips').addEventListener('keydown', e => { if (e.target.id === 'folderName' && e.key === 'Escape') { e.preventDefault(); state.newFolder = false; renderChips(); $('[data-new-folder]')?.focus(); } });
-$('#chips').addEventListener('focusout', e => { if (e.target.id === 'folderName' && state.newFolder) createFolder(e.target.value); });
-
 /* ---------- новая задача: куда и кому ---------- */
 // Исполнители для задачи группы — её участники; в личном пространстве исполнитель всегда владелец.
 function assigneeItems(gid, current) {

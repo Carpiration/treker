@@ -38,6 +38,17 @@ $('#bellBtn').addEventListener('click', () => openPage('notes'));
 /* ---------- уведомления ---------- */
 function noteText(n) {
   const a = esc(nick(n.actorId)), d = n.data;
+  // Папка целиком: в title — её название, в data.count — сколько задач.
+  if (d.folder) {
+    const f = `папку ${quote(n.title)}`, c = d.count != null ? ` (задач: ${d.count})` : '';
+    switch (n.kind) {
+      case 'moved': return `${a} передал(а) вам ${f}${c}`;
+      case 'transfer_request': return d.answer === 'accepted' ? `Вы приняли ${f} от ${a}` : d.answer === 'declined' ? `Вы отклонили ${f} от ${a}`
+        : d.answer === 'cancelled' ? `${a} отменил(а) передачу папки` : `${a} хочет передать вам ${f}${c}`;
+      case 'transfer_accepted': return `${a} принял(а) вашу ${f}`;
+      case 'transfer_declined': return `${a} отклонил(а) ${f} — она осталась у вас`;
+    }
+  }
   switch (n.kind) {
     case 'assigned': return `${a} назначил(а) вам задачу`;
     case 'status': return `${a}: статус → ${esc(statusOf(d.to).label)}`;
@@ -61,12 +72,13 @@ function buildNotesPage() {
   for (const n of notes) {
     const dl = dayLabel(n.createdAt);
     if (dl !== day) { day = dl; html += `<div class="day-h">${dl}</div>`; }
-    const tr = n.kind === 'transfer_request' && !n.data.answer && state.db.transfers.some(x => x.id === n.transferId && x.status === 'pending');
+    const tr = n.kind === 'transfer_request' && !n.data.answer
+      && [...state.db.transfers, ...state.db.ftransfers].some(x => x.id === n.transferId && x.status === 'pending');
     const open = n.taskId && state.db.tasks.some(t => t.id === n.taskId && !t.deletedAt);
     html += `<div class="ntf${!n.readAt || state.freshNotes?.has(n.id) ? ' new' : ''}">
       <span class="ntf-ic">${icon(NOTE_ICONS[n.kind] || 'bell')}</span>
       <div class="ntf-txt"><b>${noteText(n)}</b>
-        ${n.title ? `<span class="ntf-t">${open ? `<button type="button" class="link" data-goto="${n.taskId}">${esc(n.title)}</button>` : esc(n.title)}</span>` : ''}
+        ${n.title && !n.data.folder ? `<span class="ntf-t">${open ? `<button type="button" class="link" data-goto="${n.taskId}">${esc(n.title)}</button>` : esc(n.title)}</span>` : ''}
         <span class="hint">${fmtTime.format(n.createdAt)}${n.kind === 'purge_soon' ? ' · восстановить можно в «Архиве»' : ''}</span>
         ${tr ? `<div class="row-actions"><button class="btn primary sm" type="button" data-tr-yes="${n.transferId}">Принять</button>
           <button class="btn ghost sm" type="button" data-tr-no="${n.transferId}">Отклонить</button></div>` : ''}
@@ -86,11 +98,12 @@ function afterNotesOpen() {
 }
 
 async function answerTransfer(id, accept, btn) {
+  const isFolder = state.db.ftransfers.some(x => x.id === id);
   btnBusy(btn, true, accept ? 'Принимаем…' : 'Отклоняем…');
   try { await backend.rpc('respond_transfer', { p_transfer: id, p_accept: accept }); await backend.reload(); }
   catch (e) { btnBusy(btn, false); toast(errText(e)); return; }
   render();
-  toast(accept ? 'Задача принята — она в папке «Переданные»' : 'Передача отклонена');
+  toast(!accept ? 'Передача отклонена' : isFolder ? 'Папка принята — она в «Моих задачах»' : 'Задача принята — она в папке «Переданные»');
 }
 async function cancelTransfer(id, btn) {
   btnBusy(btn, true, 'Отменяем…');
@@ -261,6 +274,33 @@ async function doMove(btn, { group: g = null, owner: o = null, folder: f = null 
   toast(res === 'requested' ? `Запрос отправлен: ${user(o)?.name} должен согласиться` : `Перенесено: ${where}`);
 }
 
+/* ---------- передать папку целиком ---------- */
+function openGiveFolder(fid) { state.giveFolder = fid; openPage('give'); }
+function buildGivePage() {
+  const f = folder(state.giveFolder);
+  if (!f || f.ownerId !== state.me) { $('#stBody').innerHTML = '<p class="empty-s">Папку уже нельзя передать.</p>'; return; }
+  const n = state.db.tasks.filter(t => t.folderId === f.id && !t.deletedAt).length;
+  const people = activeUsers().filter(u => u.id !== state.me).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  $('#stBody').innerHTML = `<section class="st-sec" aria-label="Передать папку">
+    <p class="t-quote">«${esc(f.name)}» · задач: ${n}</p>
+    <p class="hint">Папка со всеми задачами перейдёт к человеку целиком и исчезнет у вас. Администратору — после его согласия.</p>
+    ${people.length ? `<div class="mv-list">${people.map(u => `<button type="button" class="mv" data-give="${u.id}">${avatar(u)}
+      <span class="mv-txt"><b>${esc(u.name)}</b><span>${u.role === 'admin' ? 'Администратор — нужно его согласие' : 'Сразу в его «Мои задачи»'}</span></span>${icon('down', 'mv-go')}</button>`).join('')}</div>`
+      : '<p class="empty-s">Больше никого нет.</p>'}
+  </section>`;
+}
+async function giveFolder(to) {
+  const f = folder(state.giveFolder), u = user(to);
+  $$('[data-give]').forEach(b => { b.disabled = true; });
+  let res;
+  try { res = await backend.rpc('transfer_folder', { p_folder: f.id, p_to: to }); await backend.reload(); }
+  catch (e) { toast(errText(e)); buildGivePage(); return; }
+  closeDlg($('#settings'));
+  if (state.folder === f.id && res === 'moved') state.folder = 'all';
+  render();
+  toast(res === 'requested' ? `Запрос отправлен: ${u.name} должен согласиться` : `Папка «${f.name}» передана: ${u.name}`);
+}
+
 /* ---------- обработчики страниц ---------- */
 $('#stBody').addEventListener('click', e => {
   const go = e.target.closest('[data-goto]'); if (go) return gotoTask(go.dataset.goto);
@@ -277,6 +317,7 @@ $('#stBody').addEventListener('click', e => {
     return;
   }
   if (e.target.closest('#jMore')) return loadJournal(true);
+  const gv = e.target.closest('[data-give]'); if (gv && !gv.disabled) return giveFolder(gv.dataset.give);
   if (e.target.closest('[data-mv-back]')) { state.moveUser = null; buildMovePage(); return; }
   const mu = e.target.closest('[data-mv-user]'); if (mu) { state.moveUser = mu.dataset.mvUser; buildMovePage(); $('.mv')?.focus(); return; }
   const mv = e.target.closest('.mv:not(:disabled)');
