@@ -2,6 +2,7 @@
 /* ---------- рендер ---------- */
 // Классы вида на <body>: действуют и на список, и на предпросмотр в настройках.
 function applyLook(p = pref) {
+  applyAccentBg(k => k in lookDraft ? lookDraft[k] : p(k));
   const b = document.body.classList;
   for (const v of ['rays', 'outline', 'off']) b.toggle(`fx-${v}`, p('taskFx') === v);
   b.toggle('fx-anim', !!p('fxAnim') && p('taskFx') !== 'off');

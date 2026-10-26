@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Галочка в безопасной зоне адаптивной иконки (центр 66 из 108). -->
+<!-- Кольцо и красная галочка в безопасной зоне адаптивной иконки (центр 66 из 108). Фон — @color/bg (тёмный). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
     <path
-        android:pathData="M38,55 L49,66 L71,43"
-        android:strokeColor="#1b0e04"
-        android:strokeWidth="7"
+        android:pathData="M54,25 a29,29 0 1,0 0.01,0 Z"
+        android:strokeColor="#2a2d34"
+        android:strokeWidth="3.6"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M41.5,55.5 L50.5,64.5 L68,45"
+        android:strokeColor="#ff2e45"
+        android:strokeWidth="6.6"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
         android:fillColor="#00000000" />

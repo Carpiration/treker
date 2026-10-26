@@ -780,3 +780,29 @@ select cron.schedule('treker-archive-warn', '7 * * * *', 'select public.archive_
 -- Каждый час: задачи старше 30 дней в архиве и уведомления старше 60 дней удаляются.
 select cron.schedule('treker-archive-purge', '17 * * * *',
   $job$delete from public.tasks where deleted_at < now() - interval '30 days'; delete from public.notifications where created_at < now() - interval '60 days'$job$);
+
+
+-- =====================================================================
+-- Аватары: готовые (preset:1..10) или своё фото в хранилище avatars (папка <id пользователя>/).
+alter table public.profiles add column if not exists avatar text
+  check (avatar is null or avatar ~ '^(preset:([1-9]|10)|up:[0-9a-f-]{36}/[A-Za-z0-9._-]{1,80})$');
+grant update (name, prefs, root_hidden, avatar) on public.profiles to authenticated;
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('avatars', 'avatars', true, 2097152, array['image/webp', 'image/jpeg', 'image/png'])
+on conflict (id) do nothing;
+
+drop policy if exists "avatars: загрузка в свою папку" on storage.objects;
+create policy "avatars: загрузка в свою папку" on storage.objects for insert to authenticated
+  with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = (select auth.uid())::text and public.is_active());
+drop policy if exists "avatars: замена своих" on storage.objects;
+create policy "avatars: замена своих" on storage.objects for update to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = (select auth.uid())::text)
+  with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = (select auth.uid())::text);
+drop policy if exists "avatars: удаление своих" on storage.objects;
+create policy "avatars: удаление своих" on storage.objects for delete to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = (select auth.uid())::text);
+-- Удаление файла требует и права на чтение строки — только своя папка.
+drop policy if exists "avatars: свои файлы" on storage.objects;
+create policy "avatars: свои файлы" on storage.objects for select to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = (select auth.uid())::text);

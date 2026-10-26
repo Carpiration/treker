@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><title>Пришелец</title><defs><linearGradient id="g6" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#10192e"/><stop offset="1" stop-color="#26407a"/></linearGradient></defs><rect width="64" height="64" fill="url(#g6)"/><path d="M32 12 C47 12 52 24 50 34 C48 46 40 54 32 54 C24 54 16 46 14 34 C12 24 17 12 32 12 Z" fill="#6ee07a"/>
+<ellipse cx="23.5" cy="34" rx="6" ry="8" fill="#15161a" transform="rotate(-28 23.5 34)"/><ellipse cx="40.5" cy="34" rx="6" ry="8" fill="#15161a" transform="rotate(28 40.5 34)"/>
+<circle cx="22" cy="31" r="1.6" fill="#fff"/><circle cx="39" cy="31" r="1.6" fill="#fff"/>
+<path d="M28 46 q4 3 8 0" stroke="#15161a" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>

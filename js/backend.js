@@ -14,7 +14,7 @@ function cloudBackend() {
     tasks: { id: 'id', title: 'title', desc: 'descr', status: 'status', assigneeId: 'assignee_id', authorId: 'author_id',
       groupId: 'group_id', ownerId: 'owner_id', folderId: 'folder_id', createdAt: 'created_at', updatedAt: 'updated_at', doneAt: 'done_at', deletedAt: 'deleted_at' },
     notifications: { readAt: 'read_at' },
-    profiles: { id: 'id', name: 'name', prefs: 'prefs', rootHidden: 'root_hidden' },
+    profiles: { id: 'id', name: 'name', prefs: 'prefs', rootHidden: 'root_hidden', avatar: 'avatar' },
     groups: { id: 'id', name: 'name', createdBy: 'created_by' },
     group_members: { groupId: 'group_id', userId: 'user_id' },
     folders: { id: 'id', ownerId: 'owner_id', name: 'name', hidden: 'hidden', kind: 'kind' },
@@ -31,7 +31,7 @@ function cloudBackend() {
   const toEvent = r => ({ id: r.id, taskId: r.task_id, title: r.title, actorId: r.actor_id, kind: r.kind, data: r.data || {},
     groupId: r.group_id, ownerId: r.owner_id, folderId: r.folder_id, createdAt: Date.parse(r.created_at) });
   const toUser = r => ({ id: r.id, name: r.name, login: r.login, role: r.role, active: r.active, pending: !!r.pending,
-    prefs: r.prefs || {}, rootHidden: !!r.root_hidden });
+    prefs: r.prefs || {}, rootHidden: !!r.root_hidden, avatar: r.avatar || null });
   const toGroup = r => ({ id: r.id, name: r.name, createdAt: Date.parse(r.created_at) });
   const toMember = r => ({ groupId: r.group_id, userId: r.user_id });
   const toFolder = r => ({ id: r.id, ownerId: r.owner_id, name: r.name, hidden: r.hidden, kind: r.kind, createdAt: Date.parse(r.created_at) });
@@ -89,6 +89,14 @@ function cloudBackend() {
       if (before) q = q.lt('id', before);
       return ok(await q).map(toEvent);
     },
+    // Своё фото: в папку <id>/ хранилища avatars; старое удаляем после замены.
+    async uploadAvatar(blob, ext) {
+      const path = `${uid}/${Date.now()}.${ext}`;
+      const { error } = await sb.storage.from('avatars').upload(path, blob, { contentType: blob.type, cacheControl: '31536000', upsert: false });
+      if (error) throw error;
+      return path;
+    },
+    async removeAvatar(path) { await sb.storage.from('avatars').remove([path]).catch(() => {}); },
     async markRead() { ok(await sb.from('notifications').update({ read_at: new Date().toISOString() }).eq('user_id', uid).is('read_at', null)); },
     async clearRead() { ok(await sb.from('notifications').delete().eq('user_id', uid).not('read_at', 'is', null)); },
     insertTasks(list) { return this.insert('tasks', list); },

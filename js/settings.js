@@ -106,7 +106,8 @@ function buildProfilePage() {
   const u = me(), dev = deviceTasks();
   $('#stBody').innerHTML = `
     <section class="st-sec" aria-label="Профиль">
-      <div class="me-card">${avatar(u, 'lg')}<span><b>${esc(u.name)}</b><span class="hint">${esc(fmtLogin(u.login))} · ${ROLES[u.role]}</span></span></div>
+      <div class="me-card">${avatar(u, 'xl')}<span><b>${esc(u.name)}</b><span class="hint">${esc(fmtLogin(u.login))} · ${ROLES[u.role]}</span></span></div>
+      ${avatarPickerHtml(u)}
       <form class="inline" id="nameForm" novalidate>
         ${fieldHtml('stName', 'Ник', NICK_ATTRS, u.name)}
         <button class="btn" type="submit">Сохранить</button>
@@ -130,6 +131,70 @@ function buildProfilePage() {
       <button class="btn ghost danger block" type="button" id="logoutBtn">${icon('logout')}Выйти</button>
     </section>`;
 }
+
+/* ---------- аватар ---------- */
+function avatarPickerHtml(u) {
+  const cur = u.avatar || '';
+  const opt = (v, html, title) => `<button type="button" class="av-opt${cur === v ? ' on' : ''}" role="radio" aria-checked="${cur === v}" data-avatar="${v}" title="${title}">${html}</button>`;
+  const names = ['Лиса', 'Кот', 'Сова', 'Панда', 'Робот', 'Пришелец', 'Привидение', 'Космонавт', 'Кактус', 'Осьминог'];
+  return `<div class="av-pick">
+    <div class="av-grid" role="radiogroup" aria-label="Аватар">
+      ${opt('', avatar({ ...u, avatar: null }), 'Инициалы')}
+      ${names.map((n, i) => opt(`preset:${i + 1}`, `<img src="icons/avatars/a${i + 1}.svg" alt="">`, n)).join('')}
+      ${cur.startsWith('up:') ? opt(cur, `<img src="${esc(avatarSrc(cur))}" alt="">`, 'Своё фото') : ''}
+    </div>
+    <label class="av-drop" id="avDrop" tabindex="0">
+      <input type="file" id="avFile" accept="image/*" class="sr-only">
+      ${icon('upload')}<span><b>Своё фото</b><span class="hint">Перетащите сюда или нажмите, чтобы выбрать из галереи или с компьютера</span></span>
+    </label>
+  </div>`;
+}
+// Фото обрезается по центру до квадрата 256×256 и сжимается (WebP, где можно, иначе JPEG).
+async function squareImage(file) {
+  if (!/^image\//.test(file.type)) throw new Error('Это не картинка');
+  if (file.size > 20 * 1024 * 1024) throw new Error('Файл больше 20 МБ');
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Не удалось открыть картинку')); i.src = url; });
+    const side = Math.min(img.naturalWidth, img.naturalHeight), size = 256;
+    const c = Object.assign(document.createElement('canvas'), { width: size, height: size });
+    c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+    const toBlob = type => new Promise(res => c.toBlob(res, type, .88));
+    let blob = await toBlob('image/webp');
+    if (!blob || blob.type !== 'image/webp') blob = await toBlob('image/jpeg');
+    return blob;
+  } finally { URL.revokeObjectURL(url); }
+}
+async function uploadAvatar(file) {
+  const drop = $('#avDrop'); drop?.classList.add('busy');
+  try {
+    const blob = await squareImage(file), old = me().avatar;
+    const path = await backend.uploadAvatar(blob, blob.type === 'image/webp' ? 'webp' : 'jpg');
+    if (await ops.patchSelf({ avatar: `up:${path}` })) {
+      toast('Фото установлено');
+      if (old?.startsWith('up:')) backend.removeAvatar(old.slice(3));
+    }
+  } catch (e) { toast(errText(e)); }
+  finally { $('#avDrop')?.classList.remove('busy'); }
+}
+async function setAvatar(v) {
+  const old = me().avatar;
+  if ((old || '') === v) return;
+  if (await ops.patchSelf({ avatar: v || null }) && old?.startsWith('up:') && old !== v) backend.removeAvatar(old.slice(3));
+}
+$('#stBody').addEventListener('click', e => { const b = e.target.closest('[data-avatar]'); if (b) setAvatar(b.dataset.avatar); });
+$('#stBody').addEventListener('change', e => { if (e.target.id === 'avFile' && e.target.files[0]) uploadAvatar(e.target.files[0]); });
+$('#stBody').addEventListener('keydown', e => { if (e.target.id === 'avDrop' && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); $('#avFile').click(); } });
+// Перетаскивание файла (ПК): подсветка зоны и загрузка по отпусканию.
+['dragenter', 'dragover'].forEach(t => $('#stBody').addEventListener(t, e => {
+  const d = e.target.closest('#avDrop'); if (!d) return; e.preventDefault(); d.classList.add('over');
+}));
+['dragleave', 'drop'].forEach(t => $('#stBody').addEventListener(t, e => {
+  const d = e.target.closest('#avDrop'); if (!d) return; e.preventDefault(); d.classList.remove('over');
+  if (t === 'drop' && e.dataTransfer?.files?.[0]) uploadAvatar(e.dataTransfer.files[0]);
+}));
+// Файл бросили мимо зоны — не даём браузеру открыть его вместо приложения.
+['dragover', 'drop'].forEach(t => addEventListener(t, e => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); }));
 
 /* ---------- внешний вид ---------- */
 function segHtml(name, value, opts) {
@@ -155,7 +220,15 @@ function previewCards() {
 }
 function buildLookPage() {
   const fx = pref('taskFx');
-  $('#stBody').innerHTML = `<section class="st-sec" aria-label="Предпросмотр">
+  $('#stBody').innerHTML = `<section class="st-sec" aria-labelledby="lkAccH">
+      <h3 class="sub-h" id="lkAccH">Акцентный цвет</h3>
+      ${accentHtml()}
+    </section>
+    <section class="st-sec" aria-labelledby="lkBgH">
+      <h3 class="sub-h" id="lkBgH">Фон приложения</h3>
+      ${bgHtml()}
+    </section>
+    <section class="st-sec" aria-label="Предпросмотр задач">
       <div class="list look-prev" aria-hidden="true">${previewCards()}</div>
       <p class="hint">Цвет — статус: красный — не начато, жёлтый — в процессе, зелёный — готово.</p>
     </section>
@@ -177,6 +250,7 @@ function buildLookPage() {
         <span class="hint">Аватар исполнителя в строке задачи группы</span></span>
         <input type="checkbox" class="switch" role="switch" id="prefAssignee"${pref('showAssignee') ? ' checked' : ''}></label>
     </section>`;
+  syncPad();  // точка свечения на мини-экране
 }
 function setPref(k, v) {
   ops.patchSelf({ prefs: { ...me().prefs, [k]: v } });

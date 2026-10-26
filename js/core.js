@@ -18,7 +18,9 @@ const ROLES = { user: 'Участник', admin: 'Администратор' };
 // Настройки вида хранятся в профиле (prefs) и одинаковы на всех устройствах человека.
 // taskFx: фон задач — 'rays' (лучи по цвету статуса), 'outline' (цветная обводка), 'off';
 // fxAnim: лёгкое переливание; statusView: статус в строке — 'pill' (метка), 'dot' (цветной индикатор), 'hide'.
-const PREF_DEFAULTS = { showAssignee: true, taskFx: 'rays', fxAnim: false, statusView: 'pill' };
+// accent — акцентный цвет; bg* — градиентный фон: включён, сила (%), распространение (vmax), положение X/Y (%).
+const PREF_DEFAULTS = { showAssignee: true, taskFx: 'rays', fxAnim: false, statusView: 'pill',
+  accent: '#ff8a3d', bgOn: true, bgStrength: 32, bgSpread: 75, bgX: 15, bgY: 0 };
 const EASE = 'cubic-bezier(.2,.8,.2,1)';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -44,7 +46,18 @@ function avatar(u, cls = '') {
   // Инициалы: у ника из нескольких частей (Анна_К) — первые буквы частей, иначе две первые буквы.
   const parts = u.name.split(/[\s_.-]+/).filter(Boolean);
   const ini = (parts.length > 1 ? parts[0][0] + parts[1][0] : u.name.slice(0, 2)).toUpperCase();
-  return `<span class="avatar ${cls}${u.active === false ? ' off' : ''}" style="background:hsl(${h} 30% 24%);color:hsl(${h} 75% 82%)" aria-hidden="true">${esc(ini)}</span>`;
+  // Картинка (готовая или своё фото) поверх инициалов: если не загрузится — останутся инициалы.
+  const src = avatarSrc(u.avatar);
+  return `<span class="avatar ${cls}${u.active === false ? ' off' : ''}${src ? ' pic' : ''}" style="background:hsl(${h} 30% 24%);color:hsl(${h} 75% 82%)" aria-hidden="true">${esc(ini)}${
+    src ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ''}</span>`;
+}
+// Аватар: 'preset:N' — из набора icons/avatars, 'up:<путь>' — своё фото в хранилище Supabase.
+const AVATAR_PRESETS = 10;
+function avatarSrc(a) {
+  if (!a) return '';
+  if (a.startsWith('preset:')) return `icons/avatars/a${a.slice(7)}.svg`;
+  if (a.startsWith('up:')) return `${CFG.supabaseUrl}/storage/v1/object/public/avatars/${a.slice(3)}`;
+  return '';
 }
 function newId() {
   if (crypto.randomUUID) return crypto.randomUUID();

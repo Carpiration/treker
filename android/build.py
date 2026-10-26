@@ -14,8 +14,8 @@ from pathlib import Path
 
 APP_ID = "app.treker.tasks"
 APP_URL = "https://carpiration.github.io/treker/"  # сайт, который открывает приложение
-VERSION_NAME = "2.0"
-VERSION_CODE = 2          # увеличивайте при каждом новом APK, иначе он не встанет поверх старого
+VERSION_NAME = "2.1"
+VERSION_CODE = 3          # увеличивайте при каждом новом APK, иначе он не встанет поверх старого
 MIN_SDK = 24              # Android 7.0
 TARGET_SDK = 35
 
