@@ -38,7 +38,9 @@ function hue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) %
 function avatar(u, cls = '') {
   if (!u) return `<span class="avatar ${cls}" aria-hidden="true">?</span>`;
   const h = hue(u.id + u.name);
-  const ini = u.name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  // Инициалы: у ника из нескольких частей (Анна_К) — первые буквы частей, иначе две первые буквы.
+  const parts = u.name.split(/[\s_.-]+/).filter(Boolean);
+  const ini = (parts.length > 1 ? parts[0][0] + parts[1][0] : u.name.slice(0, 2)).toUpperCase();
   return `<span class="avatar ${cls}${u.active === false ? ' off' : ''}" style="background:hsl(${h} 30% 24%);color:hsl(${h} 75% 82%)" aria-hidden="true">${esc(ini)}</span>`;
 }
 function newId() {
@@ -84,25 +86,33 @@ function setErr(input, msg) {
   if (box) { box.textContent = msg || ''; box.hidden = !msg; }
   return !msg;
 }
-// Логин — номер телефона: храним только цифры в международном виде (7XXXXXXXXXX для России).
-function normPhone(raw) {
-  let d = String(raw || '').replace(/\D/g, '');
-  if (d.length === 11 && d[0] === '8') d = `7${d.slice(1)}`;
-  if (d.length === 10 && d[0] === '9') d = `7${d}`;
-  return d;
+/* ---------- номер телефона ----------
+   Храним только цифры с кодом страны (998936723009). Пользователь вводит одни цифры,
+   поле само расставляет скобки и тире: +998(93)672-30-09, +7(999)123-45-67. */
+const PHONE_MASKS = [
+  { code: '998', groups: [3, 2, 3, 2, 2] },  // Узбекистан
+  { code: '7',   groups: [1, 3, 3, 2, 2] },  // Россия, Казахстан
+];
+const phoneMask = d => PHONE_MASKS.find(m => d.startsWith(m.code));
+const phoneMax = d => { const m = phoneMask(d); return m ? m.groups.reduce((a, b) => a + b) : 15; };
+const normPhone = raw => String(raw || '').replace(/\D/g, '').slice(0, 15);
+function fmtPhone(raw) {
+  const d = normPhone(raw); if (!d) return '';
+  const m = phoneMask(d); if (!m) return `+${d}`;
+  const p = []; let i = 0;
+  for (const n of m.groups) { if (i >= d.length) break; p.push(d.slice(i, i + n)); i += n; }
+  return `+${p[0]}${p[1] ? `(${p[1]}` : ''}${p[2] ? `)${p[2]}` : ''}${p[3] ? `-${p[3]}` : ''}${p[4] ? `-${p[4]}` : ''}${d.slice(i)}`;
 }
-// Текстовые логины из прежней версии (например, admin) продолжают работать.
+// Текстовые логины из самой первой версии (например, admin) продолжают работать.
 const loginKey = raw => { const d = normPhone(raw); return /^\d{11,15}$/.test(d) ? d : String(raw || '').trim().toLowerCase(); };
-function fmtLogin(login) {
-  if (!login) return '';
-  if (/^7\d{10}$/.test(login)) return `+7 ${login.slice(1, 4)} ${login.slice(4, 7)}-${login.slice(7, 9)}-${login.slice(9)}`;
-  return /^\d+$/.test(login) ? `+${login}` : login;
-}
-const PHONE_ATTRS = 'type="tel" inputmode="tel" maxlength="20" autocomplete="username" placeholder="+7 999 123-45-67"';
-const PIN_ATTRS = 'inputmode="numeric" maxlength="6"';
+const fmtLogin = login => !login ? '' : /^\d+$/.test(login) ? fmtPhone(login) : login;
+const PHONE_EXAMPLE = '+998(93)123-45-67';
+const PHONE_ATTRS = `type="tel" inputmode="numeric" maxlength="22" data-phone placeholder="${PHONE_EXAMPLE}"`;
 function phoneError(raw) {
-  if (!String(raw || '').trim()) return 'Введите номер телефона';
-  return /^\d{11,15}$/.test(normPhone(raw)) ? '' : 'Номер целиком, например +7 999 123-45-67';
+  const d = normPhone(raw);
+  if (!d) return 'Введите номер телефона';
+  const m = phoneMask(d);
+  return (m ? d.length === phoneMax(d) : d.length >= 11) ? '' : `Номер целиком, например ${PHONE_EXAMPLE}`;
 }
 function loginError(raw, exceptId, db = state.db) {
   const f = phoneError(raw); if (f) return f;
@@ -110,6 +120,32 @@ function loginError(raw, exceptId, db = state.db) {
   if (db.users.some(u => u.id !== exceptId && u.login && u.login.toLowerCase() === key)) return 'Этот номер уже зарегистрирован';
   return '';
 }
+// Маска при вводе: курсор остаётся после той же цифры; Backspace перед скобкой или тире стирает цифру.
+document.addEventListener('keydown', e => { if (e.target.matches?.('[data-phone]')) e.target.dataset.prev = normPhone(e.target.value); }, true);
+document.addEventListener('input', e => {
+  const el = e.target; if (!el.matches?.('[data-phone]')) return;
+  let left = normPhone(el.value.slice(0, el.selectionStart)).length;
+  let d = el.value.replace(/\D/g, '');
+  if (e.inputType === 'deleteContentBackward' && d === el.dataset.prev && left > 0) { d = d.slice(0, left - 1) + d.slice(left); left--; }
+  d = d.slice(0, phoneMax(d));
+  el.value = fmtPhone(d); el.dataset.prev = d;
+  let k = 0; for (let c = 0; c < left && k < el.value.length; k++) if (/\d/.test(el.value[k])) c++;
+  // Курсор не встаёт перед скобкой/тире, следующими за последней введённой цифрой.
+  if (document.activeElement === el) el.setSelectionRange(k, k);
+});
+
+/* ---------- ник ----------
+   Уникален во всей системе (без учёта регистра), это проверяет и база. */
+const NICK_ATTRS = 'maxlength="30" autocomplete="nickname" autocapitalize="off" spellcheck="false"';
+function nickError(raw) {
+  const n = String(raw || '').trim();
+  if (!n) return 'Введите ник';
+  if (n.length < 2 || n.length > 30) return 'Ник — от 2 до 30 символов';
+  if (!/^[\p{L}\p{N}_.-]+$/u.test(n)) return 'Ник — буквы, цифры и знаки _ . - без пробелов';
+  return '';
+}
+const nickTaken = (n, exceptId, db = state.db) => db.users.some(u => u.id !== exceptId && u.name.toLowerCase() === n.trim().toLowerCase());
+const PIN_ATTRS = 'inputmode="numeric" maxlength="6"';
 const pinError = pin => /^\d{6}$/.test(pin) ? '' : 'PIN — ровно 6 цифр';
 const inactiveText = u => u?.pending ? 'Профиль ждёт одобрения администратора' : 'Профиль отключён администратором';
 document.addEventListener('input', e => { if (e.target.getAttribute?.('aria-invalid')) setErr(e.target, ''); });

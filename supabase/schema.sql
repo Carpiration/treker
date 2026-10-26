@@ -39,6 +39,12 @@ create table if not exists public.tasks (
 create index if not exists tasks_assignee_idx on public.tasks (assignee_id);
 create index if not exists tasks_author_idx on public.tasks (author_id);
 
+-- Ник уникален без учёта регистра: буквы, цифры, _ . - (2–30 символов).
+create unique index if not exists profiles_name_lower_idx on public.profiles (lower(name));
+do $$ begin
+  alter table public.profiles add constraint profiles_nick_format check (name ~ '^[\w.-]{2,30}$');
+exception when duplicate_object then null; end $$;
+
 -- Приглашения прежней версии больше не нужны: сотрудников администратор создаёт функцией admin_create_user.
 drop table if exists public.invites;
 
@@ -125,6 +131,9 @@ begin
   if exists (select 1 from auth.users where email = mail) or exists (select 1 from public.profiles where login = p_login) then
     raise exception 'Этот номер уже зарегистрирован';
   end if;
+  if exists (select 1 from public.profiles where lower(name) = lower(p_name)) then
+    raise exception 'Этот ник уже занят';
+  end if;
   insert into auth.users (
     instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
     raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
@@ -146,11 +155,17 @@ end $$;
 revoke execute on function public.create_login(text, text, text, jsonb) from public, anon, authenticated;
 
 -- Проверки полей, общие для регистрации и создания сотрудника.
+-- Номер: Узбекистан 998 + 9 цифр, Россия/Казахстан 7 + 10 цифр, другие страны — 11–15 цифр.
 create or replace function public.check_new_login(p_name text, p_login text, p_pin text) returns void
 language plpgsql immutable set search_path = '' as $$
 begin
-  if coalesce(trim(p_name), '') = '' or char_length(trim(p_name)) > 60 then raise exception 'Введите имя (до 60 символов)'; end if;
-  if coalesce(p_login, '') !~ '^\d{11,15}$' then raise exception 'Номер целиком, например +7 999 123-45-67'; end if;
+  if coalesce(trim(p_name), '') !~ '^[\w.-]{2,30}$' then
+    raise exception 'Ник — от 2 до 30 символов: буквы, цифры и знаки _ . -';
+  end if;
+  if not (coalesce(p_login, '') ~ '^998\d{9}$' or coalesce(p_login, '') ~ '^7\d{10}$'
+          or (coalesce(p_login, '') ~ '^\d{11,15}$' and p_login !~ '^(998|7)')) then
+    raise exception 'Номер целиком, например +998(93)123-45-67';
+  end if;
   if coalesce(p_pin, '') !~ '^\d{6}$' then raise exception 'PIN — ровно 6 цифр'; end if;
 end $$;
 
@@ -193,13 +208,16 @@ begin
   end if;
   p_name  := trim(p_name);
   p_login := lower(trim(p_login));
-  if p_name = '' or char_length(p_name) > 60 then raise exception 'Введите имя (до 60 символов)'; end if;
+  if p_name !~ '^[\w.-]{2,30}$' then raise exception 'Ник — от 2 до 30 символов: буквы, цифры и знаки _ . -'; end if;
   if p_login !~ '^[a-z0-9._-]{3,32}$' then raise exception 'Некорректный номер телефона'; end if;
   if p_role not in ('user', 'admin') then raise exception 'Неизвестная роль'; end if;
   if coalesce(p_password, '') <> '' and p_password !~ '^\d{6}$' then raise exception 'PIN — ровно 6 цифр'; end if;
   if not exists (select 1 from public.profiles where id = target) then raise exception 'Профиль не найден'; end if;
   if exists (select 1 from public.profiles where login = p_login and id <> target) then
     raise exception 'Этот номер уже зарегистрирован';
+  end if;
+  if exists (select 1 from public.profiles where lower(name) = lower(p_name) and id <> target) then
+    raise exception 'Этот ник уже занят';
   end if;
   if target = auth.uid() and not p_active then raise exception 'Нельзя отключить свой профиль'; end if;
   select count(*) into others from public.profiles where role = 'admin' and active and id <> target;

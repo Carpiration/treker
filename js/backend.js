@@ -87,6 +87,8 @@ function authError(e) {
 }
 function errText(e, offline = 'Нет связи с сервером — изменение не сохранено') {
   const m = e?.message || '';
+  if (/profiles_name_lower|duplicate key.*name/i.test(m)) return 'Этот ник уже занят';
+  if (/profiles_nick_format/i.test(m)) return 'Ник — от 2 до 30 символов: буквы, цифры и знаки _ . -';
   if (!navigator.onLine || /failed to fetch|networkerror|load failed|network request failed/i.test(m)) return offline;
   return m || 'Не удалось сохранить';
 }

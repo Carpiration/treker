@@ -39,7 +39,7 @@ function buildSettings() {
     <section class="st-sec" aria-label="Профиль">
       <div class="me-card" id="meCard"></div>
       <form class="inline" id="nameForm" novalidate>
-        ${fieldHtml('stName', 'Имя', 'maxlength="60" autocomplete="name"', u.name)}
+        ${fieldHtml('stName', 'Ник', NICK_ATTRS, u.name)}
         <button class="btn" type="submit">Сохранить</button>
       </form>
       <details class="fold" id="pwFold"><summary>${icon('down', 'chev')}Сменить PIN</summary>
@@ -54,7 +54,7 @@ function buildSettings() {
     <section class="st-sec" aria-labelledby="stViewH">
       <h3 class="sub-h" id="stViewH">Отображение</h3>
       <label class="switch-row"><span class="txt"><span>Показывать, чья задача</span>
-        <span class="hint">Аватар исполнителя в строке и имя в подробностях</span></span>
+        <span class="hint">Аватар исполнителя в строке и ник в подробностях</span></span>
         <input type="checkbox" class="switch" role="switch" id="prefAssignee"${pref('showAssignee') ? ' checked' : ''}></label>
     </section>
     ${isAdmin() ? `<section class="st-sec" aria-labelledby="stPfH" id="pfSec">
@@ -109,8 +109,8 @@ function profileForm(u) {
   const hasLogin = !!u?.login;
   return `<form class="pf-form" data-pf-form="${id}" novalidate>
     ${u ? '' : '<h4>Новый профиль</h4>'}
-    ${fieldHtml(`pf-${id}-name`, 'Имя', 'maxlength="60" autocomplete="off"', u?.name)}
-    ${fieldHtml(`pf-${id}-login`, 'Номер телефона', 'type="tel" inputmode="tel" maxlength="20" autocomplete="off" placeholder="+7 999 123-45-67"', fmtLogin(u?.login))}
+    ${fieldHtml(`pf-${id}-name`, 'Ник', NICK_ATTRS.replace('nickname', 'off'), u?.name)}
+    ${fieldHtml(`pf-${id}-login`, 'Номер телефона', `${PHONE_ATTRS} autocomplete="off"`, fmtLogin(u?.login))}
     ${pwFieldHtml(`pf-${id}-pw`, hasLogin ? 'Новый PIN' : 'PIN', 'new-password', hasLogin ? 'Пусто — не менять' : '6 цифр')}
     <div class="field"><label for="pf-${id}-role">Роль</label>
       <select class="input" id="pf-${id}-role"${lastAdmin ? ` disabled aria-describedby="pf-${id}-rh"` : ''}>
@@ -195,8 +195,8 @@ $('#stBody').addEventListener('submit', async e => {
   if (btn?.disabled) return;
   if (f.id === 'nameForm') {
     const inp = $('#stName'), name = inp.value.trim();
-    if (!setErr(inp, name ? '' : 'Введите имя')) return inp.focus();
-    if (name !== me().name && await ops.patchSelf({ name })) toast('Имя сохранено');
+    if (!setErr(inp, nickError(name) || (nickTaken(name, state.me) ? 'Этот ник уже занят' : ''))) return inp.focus();
+    if (name !== me().name && await ops.patchSelf({ name })) toast('Ник сохранён');
   } else if (f.id === 'pwForm') {
     const o = $('#stPwOld'), n = $('#stPwNew');
     const okO = setErr(o, o.value ? '' : 'Введите текущий PIN'), okN = setErr(n, pinError(n.value));
@@ -221,7 +221,7 @@ async function submitProfile(f, btn) {
   const name = el('name').value.trim(), login = el('login').value.trim(), pw = el('pw').value, roleSel = el('role');
   let bad = null;
   const check = (input, msg) => { if (!setErr(input, msg) && !bad) bad = input; };
-  check(el('name'), name ? '' : 'Введите имя');
+  check(el('name'), nickError(name) || (nickTaken(name, u?.id) ? 'Этот ник уже занят' : ''));
   check(el('login'), loginError(login, u?.id));
   check(el('pw'), pw || isNew || !u.login ? pinError(pw) : '');
   setFormErr(id, '');
@@ -233,7 +233,8 @@ async function submitProfile(f, btn) {
   catch (err) {
     btnBusy(btn, false);
     const msg = errText(err);
-    if (/номер/i.test(msg)) { setErr(el('login'), msg); el('login').focus(); }
+    if (/ник/i.test(msg)) { setErr(el('name'), msg); el('name').focus(); }
+    else if (/номер/i.test(msg)) { setErr(el('login'), msg); el('login').focus(); }
     else if (/PIN/.test(msg)) { setErr(el('pw'), msg); el('pw').focus(); }
     else setFormErr(id, msg);
     return;

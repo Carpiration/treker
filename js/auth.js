@@ -12,8 +12,8 @@ function setAuthMode(mode, firstRun = false) {
   $('#authSwitch').textContent = reg ? 'Уже есть профиль? Войти' : 'Нет профиля? Зарегистрироваться';
   $('#authSwitch').hidden = firstRun;
   const phone = $('#lgLogin')?.value || '';
-  $('#loginFields').innerHTML = (reg ? fieldHtml('lgName', 'Имя и фамилия', 'maxlength="60" autocomplete="name"') : '')
-    + fieldHtml('lgLogin', 'Номер телефона', PHONE_ATTRS, phone)
+  $('#loginFields').innerHTML = (reg ? fieldHtml('lgName', 'Ник', NICK_ATTRS) : '')
+    + fieldHtml('lgLogin', 'Номер телефона', `${PHONE_ATTRS} autocomplete="username"`, fmtPhone(phone))
     + pwFieldHtml('lgPass', 'PIN', reg ? 'new-password' : 'current-password', reg ? 'Придумайте 6 цифр' : '6 цифр',
       reg ? PIN_ATTRS : 'inputmode="numeric" maxlength="128"');  // при входе — без ограничения: старые пароли длиннее
   setAuthErr('');
@@ -43,7 +43,7 @@ $('#loginForm').addEventListener('submit', async e => {
   setAuthErr('');
   let bad = null;
   const check = (el, msg) => { if (!setErr(el, msg) && !bad) bad = el; };
-  if (ni) check(ni, name ? '' : 'Введите имя');
+  if (ni) check(ni, nickError(name));
   check(li, reg ? phoneError(phone) : phone ? '' : 'Введите номер телефона');
   check(pi, reg ? pinError(pin) : pin ? '' : 'Введите PIN');
   if (bad) return bad.focus();
@@ -65,6 +65,7 @@ $('#loginForm').addEventListener('submit', async e => {
   } catch (err) {
     btnBusy(btn, false);
     const msg = errText(err, 'Нет связи с сервером. Проверьте интернет.');
+    if (ni && /ник/i.test(msg)) { setErr(ni, msg); ni.focus(); return; }
     if (/уже зарегистрирован|Номер целиком/.test(msg)) { setErr(li, msg); li.focus(); return; }
     if (/Неверный номер/.test(msg)) setErr(pi, msg); else setAuthErr(msg);
     pi.select(); pi.focus();
