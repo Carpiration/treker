@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Задачи</title>
+<style>
+  body{margin:0;min-height:100vh;display:grid;place-content:center;justify-items:center;gap:14px;padding:24px;box-sizing:border-box;
+    background:#0d0e10;color:#a3a8b0;font:15px/1.45 system-ui,Roboto,sans-serif;text-align:center}
+  button{min-height:44px;padding:0 20px;border:0;border-radius:8px;background:#ff8a3d;color:#1b0e04;font:inherit;font-weight:650}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<p id="msg">Загрузка…</p>
+<button type="button" id="retry" hidden>Повторить</button>
+<script>
+'use strict';
+// Страница из APK (адрес file://). Задачи версии 1.0 хранились в localStorage именно этого адреса:
+// один раз передаём их приложению через мост, чтобы сайт мог перенести их в общую базу.
+const bridge = window.TrekerBridge;
+const url = bridge ? bridge.appUrl() : '';
+try {
+  if (bridge && !localStorage.getItem('treker-handed')) {
+    const data = localStorage.getItem('treker-v3') || localStorage.getItem('team-tasks-v2');
+    if (data) bridge.keep(data);
+    localStorage.setItem('treker-handed', '1');
+  }
+} catch (e) {}
+const go = () => location.replace(url);
+if (/offline/.test(location.search)) {
+  document.getElementById('msg').textContent = 'Нет связи с сервером. Проверьте интернет.';
+  document.getElementById('retry').hidden = false;
+  document.getElementById('retry').onclick = go;
+} else go();
+</script>
+</body>
+</html>

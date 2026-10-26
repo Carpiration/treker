@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Иконка для Android 7–7.1, где нет адаптивных иконок. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="@color/accent" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/ic_launcher_fg" />
+</layer-list>
