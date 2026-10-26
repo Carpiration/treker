@@ -73,7 +73,7 @@ $('#loginForm').addEventListener('submit', async e => {
 });
 function enter(id) {
   state.me = id;
-  Object.assign(state, { space: 'me', folder: 'all', who: 'all', newFolder: false, editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: undefined });
+  Object.assign(state, { space: 'me', folder: 'all', who: 'all', newFolder: false, view: 'active', editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: undefined });
   $('#boot').hidden = true; $('#authScreen').hidden = true; $('#app').hidden = false;
   backend.subscribe(remoteChanged);
   render({ flip: false });

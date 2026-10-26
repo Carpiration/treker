@@ -83,15 +83,13 @@ function renderList({ flip = true } = {}) {
 
   const tasks = visibleTasks();
   if (state.editing && !tasks.some(t => t.id === state.editing)) state.editing = null;
-  const firstDone = tasks.findIndex(t => t.status === 'done');
-  const doneCount = firstDone < 0 ? 0 : tasks.length - firstDone;
   const info = cur();
   const empty = !canWrite(info) ? 'Здесь задач нет или они скрыты.'
     : info.kind === 'group' && state.who !== 'all' ? `У «${esc(user(state.who)?.name || '—')}» задач нет.`
     : state.folder !== 'all' && info.kind === 'me' ? 'В папке пусто. Новая задача попадёт сюда.'
     : 'Задач нет. Добавьте первую — поле сверху.';
   list.innerHTML = tasks.length
-    ? tasks.map((t, i) => (i === firstDone ? `<div class="sep" role="presentation">Готово · ${doneCount}</div>` : '') + taskHtml(t)).join('')
+    ? tasks.map(taskHtml).join('')
     : `<div class="empty">${icon('inbox')}<span>${empty}</span></div>`;
 
   const et = state.editing && $(`#et-${CSS.escape(state.editing)}`);
@@ -119,16 +117,18 @@ function renderList({ flip = true } = {}) {
 }
 
 /* ---------- новая задача ---------- */
+// Описание: свёрнуто — тонкая полоска с подсказкой или началом текста; раскрыто — поле фиксированной высоты.
+// Сворачивается, когда фокус уходит из описания (клик вне поля, Esc, отправка).
 function setDescOpen(open) {
-  $('#cBox').classList.toggle('with-desc', open);
-  $('#moreBtn').setAttribute('aria-expanded', String(open));
-  $('#moreBtn').classList.toggle('has-text', !open && !!$('#nDesc').value.trim());
+  const box = $('#cBox'), ta = $('#nDesc'), text = ta.value.trim();
+  box.classList.toggle('with-desc', open);
+  $('#descPeek').setAttribute('aria-expanded', String(open));
+  ta.tabIndex = open ? 0 : -1;
+  $('#descPeekTx').textContent = text ? text.replace(/\s+/g, ' ') : 'Описание — необязательно';
+  $('#descPeek').classList.toggle('has-text', !!text);
 }
-$('#moreBtn').addEventListener('click', () => {
-  const open = !$('#cBox').classList.contains('with-desc');
-  setDescOpen(open);
-  (open ? $('#nDesc') : $('#nTitle')).focus();
-});
+$('#descPeek').addEventListener('click', () => { setDescOpen(true); $('#nDesc').focus(); });
+$('#nDesc').addEventListener('focusout', e => { if (!e.relatedTarget || !$('#cDesc').contains(e.relatedTarget)) setDescOpen(false); });
 $('#newForm').addEventListener('submit', e => {
   e.preventDefault();
   const title = $('#nTitle').value.trim();
@@ -143,6 +143,7 @@ $('#newForm').addEventListener('submit', e => {
   // Поле очищаем сразу: повторный Enter создаст новую задачу, а не дубль этой.
   $('#nTitle').value = ''; $('#nDesc').value = ''; setDescOpen(false);
   state.newAssignee = undefined;
+  state.view = 'active';  // новая задача — активная: показываем, куда она попала
   ops.addTasks([task]);
   const to = user(place.assigneeId);
   if (to && to.id !== state.me) toast(`Задача для ${to.name}`, () => ops.undoCreate(task.id));
@@ -151,15 +152,19 @@ $('#newForm').addEventListener('submit', e => {
 $('#nTitle').addEventListener('input', () => { delete $('#cBox').dataset.invalid; $('#nTitle').removeAttribute('aria-invalid'); $('#nTitleErr').hidden = true; });
 $('#nDesc').addEventListener('keydown', e => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('#newForm').requestSubmit();
-  if (e.key === 'Escape') { setDescOpen(false); $('#nTitle').focus(); }
+  if (e.key === 'Escape') { e.preventDefault(); $('#nTitle').focus(); }
 });
 
 /* ---------- действия с задачами ---------- */
 function setStatus(id, s) {
   const t = state.db.tasks.find(x => x.id === id);
   if (!t || t.status === s) return;
+  const from = t.status;
   state.flash = id;
   ops.patchTask(id, { status: s, doneAt: s === 'done' ? Date.now() : null });
+  // Задача ушла из текущего списка (в «Готовые» или обратно) — говорим куда, с отменой.
+  if ((s === 'done') !== (from === 'done')) toast(s === 'done' ? 'Готово — задача в «Готовых»' : 'Задача снова в «Активных»',
+    () => ops.patchTask(id, { status: from, doneAt: from === 'done' ? t.doneAt || Date.now() : null }));
 }
 function transfer(taskId, toId) {
   if (toId === 'none') toId = null;

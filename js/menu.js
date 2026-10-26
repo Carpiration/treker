@@ -69,7 +69,8 @@ document.addEventListener('click', e => {
     else setMenu(m, false);
     return;
   }
-  const item = e.target.closest('.menu-item');
+  // Пункты меню задачи (#ctx) обрабатывает свой обработчик.
+  const item = e.target.closest('[data-menu] .menu-item');
   if (item) { const m = item.closest('[data-menu]'); setMenu(m, false); onMenuPick(m.dataset.menu, m.dataset.id, item.dataset.value); return; }
   if (openMenu && !openMenu.contains(e.target)) setMenu(openMenu, false);
   if (state.tapId && lastPointer === 'touch' && e.target.isConnected && !e.target.closest('[data-task]')) { state.tapId = null; applyPeek(); }
@@ -128,3 +129,102 @@ document.addEventListener('focusin', e => {
   const id = t && e.target.matches(':focus-visible') ? t.dataset.task : null;
   if (id !== state.kbdId) { state.kbdId = id; applyPeek(); }
 });
+
+/* ---------- меню задачи: правая кнопка мыши, долгое нажатие, клавиша «Меню» / Shift+F10 ----------
+   Статус, исполнитель, перенос, правка и удаление — даже если статусы и исполнители в строке скрыты. */
+let ctxTask = null, pressT = null, pressAt = null, swallowClick = false;
+function ctxItems(t) {
+  const rw = taskEditable(t), tr = pendingTransfer(t.id), it = (act, html, v = '', cls = '', checked) =>
+    `<button type="button" class="menu-item${cls}" role="${checked === undefined ? 'menuitem' : 'menuitemradio'}"${checked === undefined ? '' : ` aria-checked="${checked}"`} data-ctx="${act}" data-v="${v}">${html}${checked ? `<span class="ck">${icon('check')}</span>` : ''}</button>`;
+  if (!rw) return it('open', `${icon('text')}Подробнее`) + (t.groupId || t.ownerId === state.me ? '' : `<div class="menu-label">Только просмотр</div>`);
+  let h = it('edit', `${icon('edit')}Изменить`) + labelHtml('Статус')
+    + STATUSES.map(s => it('status', `<span class="st-ic" data-s="${s.id}">${statusIcon(s.id)}</span>${s.label}`, s.id, '', t.status === s.id)).join('');
+  if (t.groupId) {
+    const members = groupMembers(t.groupId);
+    h += labelHtml('Исполнитель') + members.map(u => it('assign', `${avatar(u)}<span class="nm">${u.id === state.me ? 'Себе' : esc(u.name)}</span>`, u.id, '', t.assigneeId === u.id)).join('')
+      + it('assign', `<span class="avatar" aria-hidden="true">–</span>Без исполнителя`, 'none', '', !t.assigneeId);
+  }
+  h += '<div class="menu-sep" role="separator"></div>'
+    + (tr ? it('cancel-tr', `${icon('x')}Отменить передачу`) : it('move', `${icon('move')}Перенести…`))
+    + it('del', `${icon('trash')}Удалить`, '', ' danger');
+  return h;
+}
+function openCtx(id, x, y, byKey = false) {
+  const t = state.db.tasks.find(v => v.id === id && !v.deletedAt); if (!t) return;
+  if (openMenu) setMenu(openMenu, false);
+  closeAppMenu();
+  ctxTask = id;
+  const m = $('#ctx');
+  m.innerHTML = ctxItems(t);
+  m.hidden = false; m.style.left = '0px'; m.style.top = '0px'; m.style.maxHeight = '';
+  // Не вылезаем за край экрана: при нехватке места снизу — раскрываем вверх.
+  const r = m.getBoundingClientRect(), pad = 8;
+  const left = Math.min(Math.max(pad, x), innerWidth - r.width - pad);
+  let top = y;
+  if (y + r.height > innerHeight - pad) top = Math.max(pad, y - r.height);
+  if (top + r.height > innerHeight - pad) m.style.maxHeight = `${innerHeight - top - pad}px`;
+  m.style.left = `${left}px`; m.style.top = `${top}px`;
+  m.style.transformOrigin = `${x - left}px ${y >= top ? y - top : 0}px`;
+  $(`#list [data-task="${id}"]`)?.classList.add('ctx-on');
+  if (byKey || finePointer()) $('.menu-item', m)?.focus({ preventScroll: true });
+}
+function closeCtx(focusTask) {
+  const m = $('#ctx'); if (m.hidden) return;
+  m.hidden = true;
+  $$('#list .ctx-on').forEach(el => el.classList.remove('ctx-on'));
+  if (focusTask) $(`[data-main="${ctxTask}"]`)?.focus({ preventScroll: true });
+  ctxTask = null;
+}
+const ctxOpen = () => !$('#ctx').hidden;
+$('#ctx').addEventListener('click', e => {
+  const b = e.target.closest('[data-ctx]'); if (!b) return;
+  const id = ctxTask, act = b.dataset.ctx, v = b.dataset.v;
+  closeCtx(act !== 'del' && act !== 'move');
+  if (act === 'edit') startEdit(id);
+  else if (act === 'status') setStatus(id, v);
+  else if (act === 'assign') transfer(id, v);
+  else if (act === 'move') openMove(id);
+  else if (act === 'cancel-tr') cancelTransfer(pendingTransfer(id)?.id, b);
+  else if (act === 'del') removeTask(id);
+  else if (act === 'open') { state.tapId = id; applyPeek(); }
+});
+$('#ctx').addEventListener('keydown', e => {
+  const items = $$('#ctx .menu-item'), i = items.indexOf(document.activeElement);
+  if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); closeCtx(true); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus(); }
+});
+$('#list').addEventListener('contextmenu', e => {
+  const row = e.target.closest('[data-task]'); if (!row || e.target.closest('textarea,input')) return;
+  e.preventDefault();
+  // На сенсорных экранах меню открывает долгое нажатие (ниже) — не дублируем.
+  if (lastPointer === 'touch') return;
+  openCtx(row.dataset.task, e.clientX, e.clientY);
+});
+$('#list').addEventListener('keydown', e => {
+  if (!(e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))) return;
+  const row = e.target.closest('[data-task]'); if (!row || e.target.closest('textarea,input')) return;
+  e.preventDefault();
+  const r = (e.target.closest('.t-main') || row).getBoundingClientRect();
+  openCtx(row.dataset.task, r.left + 16, r.bottom, true);
+});
+// Долгое нажатие (~0,5 с) на строке задачи; сдвиг пальца или прокрутка отменяют.
+$('#list').addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'touch') return;
+  const row = e.target.closest('[data-task]');
+  if (!row || e.target.closest('[data-menu],button:not(.t-main),textarea,input,form')) return;
+  pressAt = { x: e.clientX, y: e.clientY };
+  clearTimeout(pressT);
+  pressT = setTimeout(() => {
+    pressT = null; swallowClick = true;
+    navigator.vibrate?.(12);
+    openCtx(row.dataset.task, pressAt.x, pressAt.y);
+  }, 480);
+});
+const cancelPress = () => { clearTimeout(pressT); pressT = null; };
+$('#list').addEventListener('pointermove', e => { if (pressT && pressAt && Math.hypot(e.clientX - pressAt.x, e.clientY - pressAt.y) > 10) cancelPress(); });
+['pointerup', 'pointercancel'].forEach(t => $('#list').addEventListener(t, cancelPress));
+// Отпускание пальца после долгого нажатия не должно раскрывать/закрывать задачу.
+document.addEventListener('click', e => { if (swallowClick) { swallowClick = false; if (!e.target.closest('#ctx')) { e.stopPropagation(); e.preventDefault(); } } }, true);
+document.addEventListener('pointerdown', e => { if (ctxOpen() && !e.target.closest('#ctx')) closeCtx(); }, true);
+addEventListener('scroll', () => { cancelPress(); closeCtx(); }, { passive: true });
+addEventListener('resize', () => closeCtx());

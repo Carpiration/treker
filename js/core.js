@@ -59,7 +59,7 @@ function btnBusy(btn, busy, text) {
 // hoverId — подробности под курсором, kbdId — под фокусом с клавиатуры, tapId — открыты касанием.
 let backend = null;
 const state = { db: { users: [], tasks: [], groups: [], members: [], folders: [] }, me: null,
-  space: 'me', folder: 'all', who: 'all', newFolder: false,
+  space: 'me', folder: 'all', who: 'all', newFolder: false, view: 'active',
   editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: undefined, pending: false, pfOpen: null, flash: null };
 const user = id => state.db.users.find(u => u.id === id);
 const me = () => user(state.me);

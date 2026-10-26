@@ -45,10 +45,12 @@ function filterTasks(list, info = cur()) {
   if (state.folder === 'all') return list;
   return list.filter(t => (t.folderId || 'root') === state.folder);
 }
+// Переключатель «Активные / Готовые» (state.view). Активные — по дате создания (смена статуса строку не двигает),
+// готовые — по времени завершения, свежие сверху.
 function visibleTasks() {
-  return filterTasks(spaceTasks())
-    // Стабильный порядок: активные по дате создания, готовые — вниз. Смена «Не начато» ↔ «В процессе» строку не двигает.
-    .sort((a, b) => (a.status === 'done') - (b.status === 'done') || (a.status === 'done' ? (b.doneAt || 0) - (a.doneAt || 0) : b.createdAt - a.createdAt));
+  const done = state.view === 'done';
+  return filterTasks(spaceTasks()).filter(t => (t.status === 'done') === done)
+    .sort((a, b) => done ? (b.doneAt || 0) - (a.doneAt || 0) : b.createdAt - a.createdAt);
 }
 const activeCount = list => list.filter(t => t.status !== 'done').length;
 
@@ -81,8 +83,7 @@ function renderTop() {
       itemHtml(`u:${u.id}`, `${avatar(u)}<span class="nm">${esc(u.name)}</span>`, info.kind === 'user' && info.id === u.id))).join('');
   $('#whoSlot').innerHTML = menuHtml({ kind: 'space', cls: 'who-btn', align: 'left', items,
     btn: `<span class="nm">${esc(label)}</span>${icon('down', 'chev')}`, label: `${label}. Выбрать группу или чьи задачи показать` });
-  const active = activeCount(visibleTasks());
-  $('#count').innerHTML = active ? `${active}<span class="sr-only"> активных</span>` : '';
+  $$('#viewSeg .seg-b').forEach(b => { const on = b.dataset.view === state.view; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
   $('#listTitle').textContent = label;
   renderBell();
   const waiting = isAdmin() && state.db.users.some(u => u.pending && !u.active);
@@ -101,7 +102,7 @@ function chipHtml(value, html, on, extra = '') {
 }
 function renderChips() {
   const info = cur(), all = spaceTasks(info), box = $('#chips');
-  const cnt = list => { const c = activeCount(list); return c ? `<span class="c-n">${c}</span>` : ''; };
+  const cnt = () => '';  // числа — только в выпадающих списках (шапка, исполнитель), не на главном экране
   let html = '';
   if (info.kind === 'group') {
     const members = groupMembers(info.id);
@@ -125,6 +126,15 @@ function renderChips() {
   box.hidden = !html;
   if (state.newFolder) $('#folderName')?.focus();
 }
+$('#viewSeg').addEventListener('click', e => {
+  const b = e.target.closest('[data-view]'); if (!b || b.dataset.view === state.view) return;
+  state.view = b.dataset.view; state.editing = null; state.tapId = null;
+  render();
+});
+$('#viewSeg').addEventListener('keydown', e => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+  e.preventDefault(); state.view = state.view === 'done' ? 'active' : 'done'; render(); $('#viewSeg .seg-b.on').focus();
+});
 $('#chips').addEventListener('click', e => {
   if (e.target.closest('[data-new-folder]')) { state.newFolder = true; renderChips(); return; }
   const c = e.target.closest('[data-chip]'); if (!c) return;
@@ -150,7 +160,9 @@ $('#chips').addEventListener('focusout', e => { if (e.target.id === 'folderName'
 /* ---------- новая задача: куда и кому ---------- */
 // Исполнители для задачи группы — её участники; в личном пространстве исполнитель всегда владелец.
 function assigneeItems(gid, current) {
-  return groupMembers(gid).map(u => itemHtml(u.id, `${avatar(u)}<span class="nm">${u.id === state.me ? 'Себе' : esc(u.name)}</span>`, u.id === current)).join('')
+  const tasks = spaceTasks({ kind: 'group', id: gid });
+  const n = uid => { const c = activeCount(tasks.filter(t => t.assigneeId === uid)); return c ? `<span class="m-cnt" title="Активных задач">${c}</span>` : ''; };
+  return groupMembers(gid).map(u => itemHtml(u.id, `${avatar(u)}<span class="nm">${u.id === state.me ? 'Себе' : esc(u.name)}</span>${n(u.id)}`, u.id === current)).join('')
     + itemHtml('none', `<span class="avatar" aria-hidden="true">–</span><span class="nm">Без исполнителя</span>`, !current);
 }
 function defaultAssignee(info = cur()) {

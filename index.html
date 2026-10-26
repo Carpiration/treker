@@ -67,7 +67,6 @@
   <header class="top" id="top">
     <div class="bar">
       <div id="whoSlot"></div>
-      <span class="count" id="count"></span>
       <span class="net" id="net" role="status" hidden>нет сети</span>
       <button class="icon-btn push bell" type="button" id="bellBtn" aria-label="Уведомления" title="Уведомления"><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg><span class="bell-n" aria-hidden="true"></span></button>
       <button class="icon-btn dot-host" type="button" id="settingsBtn" aria-label="Меню" aria-haspopup="menu" aria-expanded="false" aria-controls="appMenu" title="Меню"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg></button>
@@ -75,21 +74,30 @@
     </div>
     <form class="composer" id="newForm" novalidate>
       <div class="c-box" id="cBox">
-        <div class="c-row">
-          <label class="sr-only" for="nTitle">Новая задача</label>
-          <input class="c-title" id="nTitle" placeholder="Новая задача" maxlength="200" autocomplete="off" aria-describedby="nTitleErr">
-          <button type="button" class="icon-btn c-more" id="moreBtn" aria-expanded="false" aria-controls="nDescWrap" aria-label="Описание задачи" title="Описание"><svg class="i" aria-hidden="true"><use href="#i-text"/></svg></button>
+        <label class="sr-only" for="nTitle">Новая задача</label>
+        <input class="c-title" id="nTitle" placeholder="Новая задача" maxlength="200" autocomplete="off" aria-describedby="nTitleErr">
+        <!-- Описание: тонкая полоска с подсказкой (или началом текста); по клику раскрывается поле фиксированной высоты. -->
+        <div class="c-desc" id="cDesc">
+          <button type="button" class="c-peek" id="descPeek" aria-controls="nDesc" aria-expanded="false"><svg class="i" aria-hidden="true"><use href="#i-text"/></svg><span class="c-peek-tx" id="descPeekTx">Описание — необязательно</span></button>
+          <div class="c-desc-wrap"><div>
+            <label class="sr-only" for="nDesc">Описание</label>
+            <textarea class="c-desc-in" id="nDesc" placeholder="Что именно, где, как проверить" maxlength="5000" tabindex="-1"></textarea>
+          </div></div>
         </div>
-        <div class="c-desc-wrap" id="nDescWrap"><div>
-          <label class="sr-only" for="nDesc">Описание</label>
-          <textarea class="c-desc" id="nDesc" placeholder="Описание: что именно, где, как проверить" maxlength="5000"></textarea>
-        </div></div>
       </div>
-      <div id="nAssignSlot"></div>
-      <button class="btn primary c-add" type="submit" id="nSubmit" aria-label="Добавить задачу" title="Добавить (Enter)"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+      <div class="c-side">
+        <div id="nAssignSlot" hidden></div>
+        <button class="btn primary c-add" type="submit" id="nSubmit" aria-label="Добавить задачу" title="Добавить (Enter)"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+      </div>
     </form>
     <div class="field-error" id="nTitleErr" hidden></div>
-    <div class="chips" id="chips" role="toolbar" aria-label="Фильтр задач" hidden></div>
+    <div class="filters">
+      <div class="seg" id="viewSeg" role="radiogroup" aria-label="Какие задачи показать">
+        <button type="button" class="seg-b on" role="radio" aria-checked="true" data-view="active">Активные</button>
+        <button type="button" class="seg-b" role="radio" aria-checked="false" data-view="done">Готовые</button>
+      </div>
+      <div class="chips" id="chips" role="toolbar" aria-label="Фильтр задач" hidden></div>
+    </div>
   </header>
   <main>
     <h2 class="sr-only" id="listTitle">Задачи</h2>
@@ -103,6 +111,7 @@
   <div class="dlg-body" id="stBody"></div>
 </dialog>
 
+<div class="menu-list ctx" id="ctx" role="menu" aria-label="Действия с задачей" hidden></div>
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
 <script src="js/core.js" defer></script>
