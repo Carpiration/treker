@@ -1,8 +1,10 @@
 -- Трекер задач: схема базы Supabase.
 -- Выполнить целиком в Supabase → SQL Editor. Повторный запуск безопасен (обновляет функции и правила).
 --
--- Логин пользователя хранится как e-mail вида <логин>@<loginDomain из config.js>; писем на него не отправляется,
+-- Вход — по номеру телефона и PIN. Номер (только цифры, 7XXXXXXXXXX) хранится как служебный e-mail
+-- <номер>@<loginDomain из config.js>; писем на него не отправляется,
 -- поэтому в Authentication → Sign In / Providers → Email нужно выключить «Confirm email».
+-- Первый зарегистрированный становится администратором; остальные ждут одобрения (pending).
 
 create extension if not exists pgcrypto with schema extensions;
 
@@ -13,6 +15,7 @@ create table if not exists public.profiles (
   login      text not null unique check (login ~ '^[a-z0-9._-]{3,32}$'),
   role       text not null default 'user' check (role in ('user', 'admin')),
   active     boolean not null default true,
+  pending    boolean not null default false,
   prefs      jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
@@ -36,6 +39,7 @@ create table if not exists public.tasks (
   updated_at  timestamptz not null default now(),
   done_at     timestamptz
 );
+alter table public.profiles add column if not exists pending boolean not null default false;
 create index if not exists tasks_assignee_idx on public.tasks (assignee_id);
 
 -- ---------- проверки прав ----------
@@ -92,16 +96,17 @@ grant update (title, descr, status, assignee_id, updated_at, done_at) on public.
 
 -- ---------- новый пользователь ----------
 -- Первый зарегистрированный (пока нет администратора) становится администратором.
--- Дальше активный профиль получают только приглашённые администратором; остальные — отключённый профиль без доступа.
+-- Приглашённые администратором сразу активны; зарегистрировавшиеся сами — ждут одобрения и до него ничего не видят.
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
   lg  text := lower(split_part(new.email, '@', 1));
+  nm  text := left(coalesce(nullif(trim(new.raw_user_meta_data ->> 'name'), ''), lg), 60);
   inv public.invites%rowtype;
 begin
   if not exists (select 1 from public.profiles where role = 'admin' and active) then
     insert into public.profiles (id, name, login, role, active)
-    values (new.id, coalesce(nullif(trim(new.raw_user_meta_data ->> 'name'), ''), 'Администратор'), lg, 'admin', true);
+    values (new.id, nm, lg, 'admin', true);
     return new;
   end if;
   select * into inv from public.invites where login = lg;
@@ -109,7 +114,7 @@ begin
     insert into public.profiles (id, name, login, role, active) values (new.id, inv.name, lg, inv.role, true);
     delete from public.invites where login = lg;
   else
-    insert into public.profiles (id, name, login, role, active) values (new.id, lg, lg, 'user', false);
+    insert into public.profiles (id, name, login, role, active, pending) values (new.id, nm, lg, 'user', false, true);
   end if;
   return new;
 end $$;
@@ -133,13 +138,13 @@ begin
   p_name  := trim(p_name);
   p_login := lower(trim(p_login));
   if p_name = '' or char_length(p_name) > 60 then raise exception 'Введите имя (до 60 символов)'; end if;
-  if p_login !~ '^[a-z0-9._-]{3,32}$' then raise exception 'Логин: 3–32 символа — латиница, цифры, точка, дефис, подчёркивание'; end if;
+  if p_login !~ '^[a-z0-9._-]{3,32}$' then raise exception 'Некорректный номер телефона'; end if;
   if p_role not in ('user', 'admin') then raise exception 'Неизвестная роль'; end if;
-  if coalesce(p_password, '') <> '' and char_length(p_password) < 6 then raise exception 'Пароль — минимум 6 символов'; end if;
+  if coalesce(p_password, '') <> '' and char_length(p_password) < 6 then raise exception 'PIN — 6 цифр'; end if;
   if not exists (select 1 from public.profiles where id = target) then raise exception 'Профиль не найден'; end if;
   if exists (select 1 from public.profiles where login = p_login and id <> target)
      or exists (select 1 from public.invites where login = p_login) then
-    raise exception 'Такой логин уже занят';
+    raise exception 'Этот номер уже зарегистрирован';
   end if;
   if target = auth.uid() and not p_active then raise exception 'Нельзя отключить свой профиль'; end if;
   select count(*) into others from public.profiles where role = 'admin' and active and id <> target;
@@ -147,7 +152,9 @@ begin
     raise exception 'Должен остаться хотя бы один администратор';
   end if;
 
-  update public.profiles set name = p_name, login = p_login, role = p_role, active = p_active where id = target;
+  update public.profiles
+    set name = p_name, login = p_login, role = p_role, active = p_active, pending = pending and not p_active
+  where id = target;
 
   select split_part(email, '@', 2) into dom from auth.users where id = target;
   update auth.users set

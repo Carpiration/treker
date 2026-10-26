@@ -90,6 +90,10 @@ select.input{appearance:none;padding-right:34px;cursor:pointer;background:var(--
 .brand-mark .i{width:15px;height:15px;stroke-width:2.6}
 .auth h1{font-size:24px;font-weight:700;letter-spacing:-.01em;margin-top:8px}
 .auth .hint{margin-top:-8px;font-size:13.5px;color:var(--muted)}
+.auth .note{padding:10px 12px;border-radius:var(--r-sm);background:var(--st-done-bg);color:var(--st-done);font-size:13.5px}
+.auth #authSwitch{margin-top:-6px}
+.dot-host{position:relative}
+.dot-host.has-dot::after{content:"";position:absolute;top:7px;right:7px;width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--bg)}
 .boot{min-height:100dvh;display:grid;place-content:center;justify-items:center;gap:14px;padding:24px var(--gutter);color:var(--faint);text-align:center;animation:fade var(--t) 300ms backwards}
 .boot.error{color:var(--muted);animation:none}
 .net{padding:2px 8px;border-radius:999px;background:var(--danger-soft);color:var(--danger);font-size:12px;font-weight:600}
@@ -321,10 +325,12 @@ dialog.closing::backdrop{animation:fade-out 160ms forwards}
   <form class="auth-box" id="loginForm" novalidate>
     <div class="brand"><span class="brand-mark"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg></span>Задачи</div>
     <h1 id="authH">Вход</h1>
-    <p class="hint" id="authHint" hidden>Создайте администратора — он добавляет остальных в настройках.</p>
+    <p class="hint" id="authHint" hidden></p>
+    <p class="note" id="authNote" role="status" hidden></p>
     <div id="loginFields" style="display:grid;gap:14px"></div>
     <div class="field-error" id="authErr" role="alert" hidden></div>
     <button class="btn primary block" type="submit" id="authBtn">Войти</button>
+    <button class="btn ghost block" type="button" id="authSwitch">Нет профиля? Зарегистрироваться</button>
   </form>
 </div>
 
@@ -335,7 +341,7 @@ dialog.closing::backdrop{animation:fade-out 160ms forwards}
       <div id="whoSlot"></div>
       <span class="count" id="count"></span>
       <span class="net" id="net" role="status" hidden>нет сети</span>
-      <button class="icon-btn push" type="button" id="settingsBtn" aria-label="Настройки и профиль" title="Настройки"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg></button>
+      <button class="icon-btn push dot-host" type="button" id="settingsBtn" aria-label="Настройки и профиль" title="Настройки"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg></button>
     </div>
     <form class="composer" id="newForm" novalidate>
       <div class="c-box" id="cBox">
@@ -520,18 +526,25 @@ function localBackend() {
       return u?.active && u.login ? id : null;
     },
     async needsSetup() { return !state.db.users.some(u => u.active && u.role === 'admin' && u.login); },
-    async setup(name, login, pw) {
-      if (await this.needsSetup() === false) throw new Error('Администратор уже создан — войдите');
-      const err = loginError(login, null, store.load() || state.db); if (err) throw new Error(err);
-      const id = run(db => { const u = { id: `u${++db.seq}`, name, login, role: 'admin', active: true, prefs: {}, ...makeSecret(pw) }; db.users.push(u); return u.id; });
-      session.set(id);
-      return id;
+    // Первый зарегистрированный — администратор; остальные ждут одобрения.
+    async register(name, phone, pin) {
+      state.db = store.load() || state.db;
+      const err = loginError(phone); if (err) throw new Error(err);
+      const first = await this.needsSetup();
+      const u = run(db => {
+        const nu = { id: `u${++db.seq}`, name, login: normPhone(phone), role: first ? 'admin' : 'user', active: first, pending: !first, prefs: {}, ...makeSecret(pin) };
+        db.users.push(nu);
+        return nu;
+      });
+      if (u.active) session.set(u.id);
+      return u;
     },
     async login(login, pw) {
       state.db = store.load() || state.db;
-      const u = state.db.users.find(x => x.login && x.login.toLowerCase() === login.toLowerCase());
-      if (!u || hashPw(pw, u.salt) !== u.hash) throw new Error('Неверный логин или пароль');
-      if (!u.active) throw new Error('Профиль отключён администратором');
+      const key = loginKey(login);
+      const u = state.db.users.find(x => x.login && x.login.toLowerCase() === key);
+      if (!u || hashPw(pw, u.salt) !== u.hash) throw new Error('Неверный номер или PIN');
+      if (!u.active) throw new Error(inactiveText(u));
       session.set(u.id);
       return u.id;
     },
@@ -543,7 +556,7 @@ function localBackend() {
     async updateSelf(f) { run(db => Object.assign(find(db, state.me), f)); },
     async changePassword(oldPw, newPw) {
       const u = user(state.me);
-      if (hashPw(oldPw, u.salt) !== u.hash) throw new Error('Неверный текущий пароль');
+      if (hashPw(oldPw, u.salt) !== u.hash) throw new Error('Неверный текущий PIN');
       run(db => Object.assign(find(db, state.me), makeSecret(newPw)));
     },
     async saveUser(id, d) {
@@ -554,12 +567,14 @@ function localBackend() {
         const others = db.users.filter(u => u.active && u.role === 'admin' && u.id !== id).length;
         if (id && others === 0 && (d.role !== 'admin' || !d.active)) throw new Error('Должен остаться хотя бы один администратор');
         const secret = d.password ? makeSecret(d.password) : null;
+        const login = d.login ? normPhone(d.login) : null;
         if (!id) {
-          const nu = { id: `u${++db.seq}`, name: d.name, login: d.login, role: d.role, active: true, prefs: {}, ...secret };
+          const nu = { id: `u${++db.seq}`, name: d.name, login, role: d.role, active: true, pending: false, prefs: {}, ...secret };
           db.users.push(nu);
           return nu.id;
         }
-        Object.assign(find(db, id), { name: d.name, login: d.login, role: d.role, active: d.active }, secret);
+        const x = find(db, id);
+        Object.assign(x, { name: d.name, login, role: d.role, active: d.active, pending: !!x.pending && !d.active }, secret);
         return id;
       });
     },
@@ -578,14 +593,14 @@ function cloudBackend() {
   // Отдельный клиент без сохранения сессии: проверить пароль или зарегистрировать сотрудника, не выходя из своего профиля.
   let tempClient = null;
   const temp = () => (tempClient ||= supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, auth('treker-temp')));
-  const email = login => `${login.trim().toLowerCase()}@${CFG.loginDomain || 'treker.local'}`;
+  const email = login => `${loginKey(login)}@${CFG.loginDomain || 'treker.local'}`;
   const ok = ({ data, error }) => { if (error) throw error; return data; };
   const iso = ms => ms == null ? null : new Date(ms).toISOString();
   const COLS = { id: 'id', title: 'title', desc: 'descr', status: 'status', assigneeId: 'assignee_id', authorId: 'author_id', createdAt: 'created_at', updatedAt: 'updated_at', doneAt: 'done_at' };
   const toRow = t => Object.fromEntries(Object.entries(t).filter(([k]) => k in COLS).map(([k, v]) => [COLS[k], k.endsWith('At') ? iso(v) : v]));
   const toTask = r => ({ id: r.id, title: r.title, desc: r.descr, status: r.status, assigneeId: r.assignee_id, authorId: r.author_id,
     createdAt: Date.parse(r.created_at), updatedAt: Date.parse(r.updated_at), doneAt: r.done_at ? Date.parse(r.done_at) : null });
-  const toUser = r => ({ id: r.id, name: r.name, login: r.login, role: r.role, active: r.active, prefs: r.prefs || {} });
+  const toUser = r => ({ id: r.id, name: r.name, login: r.login, role: r.role, active: r.active, pending: !!r.pending, prefs: r.prefs || {} });
   let uid = null, chan = null;
   return {
     mode: 'cloud',
@@ -598,20 +613,23 @@ function cloudBackend() {
       return uid;
     },
     async needsSetup() { return ok(await sb.rpc('needs_setup')); },
-    async setup(name, login, pw) {
-      const { data, error } = await sb.auth.signUp({ email: email(login), password: pw, options: { data: { name } } });
+    // Первый зарегистрированный — администратор (это решает триггер в базе); остальные ждут одобрения.
+    async register(name, phone, pin) {
+      const { data, error } = await sb.auth.signUp({ email: email(phone), password: pin, options: { data: { name } } });
       if (error) throw authError(error);
       if (!data.session) throw new Error('В Supabase включено подтверждение e-mail. Выключите его и выполните шаг из docs/SUPABASE.md.');
       uid = data.user.id;
       await this.reload();
-      return uid;
+      const u = user(uid);
+      if (!u?.active) await this.logout();
+      return u || { active: false, pending: true };
     },
     async login(login, pw) {
       const { data, error } = await sb.auth.signInWithPassword({ email: email(login), password: pw });
       if (error) throw authError(error);
       uid = data.user.id;
       await this.reload();
-      if (!user(uid)?.active) { await this.logout(); throw new Error('Профиль отключён администратором'); }
+      if (!user(uid)?.active) { const u = user(uid); await this.logout(); throw new Error(inactiveText(u)); }
       return uid;
     },
     async logout() { uid = null; this.unsubscribe(); await sb.auth.signOut({ scope: 'local' }).catch(() => {}); },
@@ -625,19 +643,19 @@ function cloudBackend() {
     async updateSelf(f) { ok(await sb.from('profiles').update(f).eq('id', uid)); },
     async changePassword(oldPw, newPw) {
       const chk = await temp().auth.signInWithPassword({ email: email(user(uid).login), password: oldPw });
-      if (chk.error) throw new Error(/invalid login/i.test(chk.error.message) ? 'Неверный текущий пароль' : chk.error.message);
+      if (chk.error) throw new Error(/invalid login/i.test(chk.error.message) ? 'Неверный текущий PIN' : chk.error.message);
       await temp().auth.signOut({ scope: 'local' }).catch(() => {});
       const { error } = await sb.auth.updateUser({ password: newPw });
       if (error) throw authError(error);
     },
     async saveUser(id, d) {
       if (id) {
-        ok(await sb.rpc('admin_save_user', { target: id, p_name: d.name, p_login: d.login, p_role: d.role, p_active: d.active, p_password: d.password || null }));
+        ok(await sb.rpc('admin_save_user', { target: id, p_name: d.name, p_login: normPhone(d.login), p_role: d.role, p_active: d.active, p_password: d.password || null }));
         await this.reload();
         return id;
       }
       // Новый сотрудник: приглашение + регистрация. Триггер в базе выдаёт профиль с ролью из приглашения.
-      const login = d.login.toLowerCase();
+      const login = normPhone(d.login);
       ok(await sb.from('invites').upsert({ login, name: d.name, role: d.role }));
       const { data, error } = await temp().auth.signUp({ email: email(login), password: d.password, options: { data: { name: d.name } } });
       if (error) { await sb.from('invites').delete().eq('login', login); throw authError(error); }
@@ -657,12 +675,12 @@ function cloudBackend() {
 }
 function authError(e) {
   const m = e?.message || String(e);
-  if (/invalid login credentials/i.test(m)) return new Error('Неверный логин или пароль');
+  if (/invalid login credentials/i.test(m)) return new Error('Неверный номер или PIN');
   if (/banned/i.test(m)) return new Error('Профиль отключён администратором');
-  if (/already (been )?registered|already exists/i.test(m)) return new Error('Такой логин уже занят');
+  if (/already (been )?registered|already exists/i.test(m)) return new Error('Этот номер уже зарегистрирован');
   if (/not confirmed/i.test(m)) return new Error('В Supabase включено подтверждение e-mail. Выключите его и выполните шаг из docs/SUPABASE.md.');
-  if (/password/i.test(m)) return new Error(`Пароль не подошёл: ${m}`);
-  if (/email/i.test(m) && /invalid/i.test(m)) return new Error('Сервер не принял логин. Проверьте loginDomain в config.js (docs/SUPABASE.md).');
+  if (/password/i.test(m)) return new Error(`PIN не подошёл: ${m}`);
+  if (/email/i.test(m) && /invalid/i.test(m)) return new Error('Сервер не принял номер. Проверьте loginDomain в config.js (docs/SUPABASE.md).');
   return e instanceof Error ? e : new Error(m);
 }
 function errText(e, offline = 'Нет связи с сервером — изменение не сохранено') {
@@ -705,7 +723,7 @@ async function syncNow() {
   if (inflight) { dirty = true; return; }
   const before = JSON.stringify(state.db);
   try { await backend.reload(); } catch { return; }
-  if (!user(state.me)?.active) { logout('Профиль отключён администратором'); return; }
+  if (!user(state.me)?.active) { logout(inactiveText(user(state.me))); return; }
   if (JSON.stringify(state.db) === before) return;
   // Пока открыт выпадающий список, не перерисовываем — догоним после закрытия.
   if (openMenu) { state.pending = true; return; }
@@ -730,10 +748,10 @@ function fieldHtml(id, label, attrs = '', value = '') {
     <input class="input" id="${id}" value="${esc(value)}" aria-describedby="${id}-err" ${attrs}>
     <div class="field-error" id="${id}-err" hidden></div></div>`;
 }
-function pwFieldHtml(id, label, autocomplete, placeholder = '') {
+function pwFieldHtml(id, label, autocomplete, placeholder = '', attrs = PIN_ATTRS) {
   return `<div class="field"><label for="${id}">${label}</label>
-    <div class="pw"><input class="input" type="password" id="${id}" autocomplete="${autocomplete}" placeholder="${esc(placeholder)}" maxlength="128" aria-describedby="${id}-err">
-    <button type="button" class="icon-btn" data-eye aria-label="Показать пароль" aria-pressed="false">${icon('eye')}</button></div>
+    <div class="pw"><input class="input" type="password" id="${id}" autocomplete="${autocomplete}" placeholder="${esc(placeholder)}" ${attrs} aria-describedby="${id}-err">
+    <button type="button" class="icon-btn" data-eye aria-label="Показать" aria-pressed="false">${icon('eye')}</button></div>
     <div class="field-error" id="${id}-err" hidden></div></div>`;
 }
 function setErr(input, msg) {
@@ -743,74 +761,112 @@ function setErr(input, msg) {
   if (box) { box.textContent = msg || ''; box.hidden = !msg; }
   return !msg;
 }
-const LOGIN_ATTRS = 'maxlength="32" autocomplete="username" autocapitalize="none" spellcheck="false"';
-function loginFormatError(login) {
-  if (!login) return 'Введите логин';
-  if (!/^[A-Za-z0-9._-]{3,32}$/.test(login)) return '3–32 символа: латиница, цифры, точка, дефис, подчёркивание';
+// Логин — номер телефона: храним только цифры в международном виде (7XXXXXXXXXX для России).
+function normPhone(raw) {
+  let d = String(raw || '').replace(/\D/g, '');
+  if (d.length === 11 && d[0] === '8') d = `7${d.slice(1)}`;
+  if (d.length === 10 && d[0] === '9') d = `7${d}`;
+  return d;
+}
+// Текстовые логины из прежней версии (например, admin) продолжают работать.
+const loginKey = raw => { const d = normPhone(raw); return /^\d{11,15}$/.test(d) ? d : String(raw || '').trim().toLowerCase(); };
+function fmtLogin(login) {
+  if (!login) return '';
+  if (/^7\d{10}$/.test(login)) return `+7 ${login.slice(1, 4)} ${login.slice(4, 7)}-${login.slice(7, 9)}-${login.slice(9)}`;
+  return /^\d+$/.test(login) ? `+${login}` : login;
+}
+const PHONE_ATTRS = 'type="tel" inputmode="tel" maxlength="20" autocomplete="username" placeholder="+7 999 123-45-67"';
+const PIN_ATTRS = 'inputmode="numeric" maxlength="6"';
+function phoneError(raw) {
+  if (!String(raw || '').trim()) return 'Введите номер телефона';
+  return /^\d{11,15}$/.test(normPhone(raw)) ? '' : 'Номер целиком, например +7 999 123-45-67';
+}
+function loginError(raw, exceptId, db = state.db) {
+  const f = phoneError(raw); if (f) return f;
+  const key = normPhone(raw);
+  if (db.users.some(u => u.id !== exceptId && u.login && u.login.toLowerCase() === key)) return 'Этот номер уже зарегистрирован';
   return '';
 }
-function loginError(login, exceptId, db = state.db) {
-  const f = loginFormatError(login); if (f) return f;
-  if (db.users.some(u => u.id !== exceptId && u.login && u.login.toLowerCase() === login.toLowerCase())) return 'Такой логин уже занят';
-  return '';
-}
-const pwError = pw => pw.length < 6 ? 'Минимум 6 символов' : '';
+const pinError = pin => /^\d{6}$/.test(pin) ? '' : 'PIN — ровно 6 цифр';
+const inactiveText = u => u?.pending ? 'Профиль ждёт одобрения администратора' : 'Профиль отключён администратором';
 document.addEventListener('input', e => { if (e.target.getAttribute?.('aria-invalid')) setErr(e.target, ''); });
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-eye]'); if (!b) return;
   const inp = b.previousElementSibling, show = inp.type === 'password';
   inp.type = show ? 'text' : 'password';
   b.setAttribute('aria-pressed', String(show));
-  b.setAttribute('aria-label', show ? 'Скрыть пароль' : 'Показать пароль');
+  b.setAttribute('aria-label', show ? 'Скрыть' : 'Показать');
   b.innerHTML = icon(show ? 'eye-off' : 'eye');
 });
 
-/* ---------- вход и первый запуск ---------- */
+/* ---------- вход и регистрация ---------- */
 let authMode = 'login';
-function setAuthMode(mode) {
+function setAuthMode(mode, firstRun = false) {
   authMode = mode;
-  const setup = mode === 'setup';
-  $('#authH').textContent = setup ? 'Первый запуск' : 'Вход';
-  $('#authHint').hidden = !setup;
-  $('#authBtn').textContent = setup ? 'Создать и войти' : 'Войти';
-  $('#loginFields').innerHTML = (setup ? fieldHtml('lgName', 'Ваше имя', 'maxlength="60" autocomplete="name"') : '')
-    + fieldHtml('lgLogin', 'Логин', LOGIN_ATTRS)
-    + pwFieldHtml('lgPass', 'Пароль', setup ? 'new-password' : 'current-password', setup ? 'Минимум 6 символов' : '');
+  const reg = mode === 'register';
+  $('#authH').textContent = reg ? 'Регистрация' : 'Вход';
+  $('#authHint').textContent = firstRun ? 'Вы первый — станете администратором и будете одобрять остальных.'
+    : 'После регистрации администратор включит ваш профиль.';
+  $('#authHint').hidden = !reg;
+  $('#authBtn').textContent = reg ? 'Зарегистрироваться' : 'Войти';
+  $('#authSwitch').textContent = reg ? 'Уже есть профиль? Войти' : 'Нет профиля? Зарегистрироваться';
+  $('#authSwitch').hidden = firstRun;
+  const phone = $('#lgLogin')?.value || '';
+  $('#loginFields').innerHTML = (reg ? fieldHtml('lgName', 'Имя и фамилия', 'maxlength="60" autocomplete="name"') : '')
+    + fieldHtml('lgLogin', 'Номер телефона', PHONE_ATTRS, phone)
+    + pwFieldHtml('lgPass', 'PIN', reg ? 'new-password' : 'current-password', reg ? 'Придумайте 6 цифр' : '6 цифр',
+      reg ? PIN_ATTRS : 'inputmode="numeric" maxlength="128"');  // при входе — без ограничения: старые пароли длиннее
   setAuthErr('');
 }
 function setAuthErr(msg) { $('#authErr').textContent = msg; $('#authErr').hidden = !msg; }
+function setAuthNote(msg) { $('#authNote').textContent = msg; $('#authNote').hidden = !msg; }
 async function showAuth(msg) {
   $('#boot').hidden = true; $('#app').hidden = true; $('#authScreen').hidden = false;
-  let setup = false;
-  try { setup = await backend.needsSetup(); } catch {}
-  setAuthMode(setup ? 'setup' : 'login');
+  let firstRun = false;
+  try { firstRun = await backend.needsSetup(); } catch {}
+  setAuthNote('');
+  setAuthMode(firstRun ? 'register' : 'login', firstRun);
   if (msg) setAuthErr(msg);
   if (finePointer()) $('#loginFields input').focus();
 }
+$('#authSwitch').addEventListener('click', () => {
+  setAuthNote('');
+  setAuthMode(authMode === 'login' ? 'register' : 'login');
+  if (finePointer()) $('#loginFields input').focus();
+});
 $('#loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   const btn = $('#authBtn'); if (btn.disabled) return;
   const li = $('#lgLogin'), pi = $('#lgPass'), ni = $('#lgName');
-  const login = li.value.trim(), pw = pi.value, name = ni?.value.trim();
-  const setup = authMode === 'setup';
+  const phone = li.value.trim(), pin = pi.value, name = ni?.value.trim();
+  const reg = authMode === 'register';
   setAuthErr('');
   let bad = null;
   const check = (el, msg) => { if (!setErr(el, msg) && !bad) bad = el; };
   if (ni) check(ni, name ? '' : 'Введите имя');
-  check(li, setup ? loginFormatError(login) : login ? '' : 'Введите логин');
-  check(pi, setup ? pwError(pw) : pw ? '' : 'Введите пароль');
+  check(li, reg ? phoneError(phone) : phone ? '' : 'Введите номер телефона');
+  check(pi, reg ? pinError(pin) : pin ? '' : 'Введите PIN');
   if (bad) return bad.focus();
-  btnBusy(btn, true, setup ? 'Создаём…' : 'Входим…');
+  btnBusy(btn, true, reg ? 'Регистрируем…' : 'Входим…');
   try {
-    const id = setup ? await backend.setup(name, login, pw) : await backend.login(login, pw);
-    pi.value = '';
+    if (reg) {
+      const u = await backend.register(name, phone, pin);
+      btnBusy(btn, false);
+      if (u.active) { pi.value = ''; enter(u.id); return; }
+      setAuthMode('login');
+      $('#lgLogin').value = phone;
+      setAuthNote('Заявка отправлена. Войти можно, когда администратор одобрит профиль.');
+      return;
+    }
+    const id = await backend.login(phone, pin);
     btnBusy(btn, false);
+    pi.value = '';
     enter(id);
   } catch (err) {
     btnBusy(btn, false);
     const msg = errText(err, 'Нет связи с сервером. Проверьте интернет.');
-    if (/Неверный логин/.test(msg)) setErr(pi, msg); else setAuthErr(msg);
-    if (/логин уже занят/.test(msg)) { setErr(li, msg); li.focus(); return; }
+    if (/уже зарегистрирован|Номер целиком/.test(msg)) { setErr(li, msg); li.focus(); return; }
+    if (/Неверный номер/.test(msg)) setErr(pi, msg); else setAuthErr(msg);
     pi.select(); pi.focus();
   }
 });
@@ -1000,6 +1056,9 @@ function renderTop() {
   const active = visibleTasks().filter(t => t.status !== 'done').length;
   $('#count').innerHTML = active ? `${active}<span class="sr-only"> активных</span>` : '';
   $('#listTitle').textContent = label;
+  const waiting = isAdmin() && state.db.users.some(u => u.pending && !u.active);
+  $('#settingsBtn').classList.toggle('has-dot', waiting);
+  $('#settingsBtn').setAttribute('aria-label', waiting ? 'Настройки и профиль — есть заявки на вход' : 'Настройки и профиль');
 }
 
 // Значок описания склеен с последним словом, чтобы не переносился на строку один.
@@ -1267,12 +1326,12 @@ function buildSettings() {
         ${fieldHtml('stName', 'Имя', 'maxlength="60" autocomplete="name"', u.name)}
         <button class="btn" type="submit">Сохранить</button>
       </form>
-      <details class="fold" id="pwFold"><summary>${icon('down', 'chev')}Сменить пароль</summary>
+      <details class="fold" id="pwFold"><summary>${icon('down', 'chev')}Сменить PIN</summary>
         <form class="fold-body" id="pwForm" novalidate>
           <input type="text" autocomplete="username" value="${esc(u.login || '')}" hidden>
-          ${pwFieldHtml('stPwOld', 'Текущий пароль', 'current-password')}
-          ${pwFieldHtml('stPwNew', 'Новый пароль', 'new-password', 'Минимум 6 символов')}
-          <button class="btn" type="submit">Сменить пароль</button>
+          ${pwFieldHtml('stPwOld', 'Текущий PIN', 'current-password', '', 'maxlength="128"')}
+          ${pwFieldHtml('stPwNew', 'Новый PIN', 'new-password', '6 цифр')}
+          <button class="btn" type="submit">Сменить PIN</button>
         </form>
       </details>
     </section>
@@ -1286,7 +1345,7 @@ function buildSettings() {
       <h3 class="sub-h" id="stPfH">Профили</h3><div class="pf-list" id="pfList"></div></section>` : ''}
     ${dev ? `<section class="st-sec" aria-labelledby="stImpH">
       <h3 class="sub-h" id="stImpH">Перенос с этого устройства</h3>
-      <p class="hint">В этом браузере остались задачи из локального режима: ${dev.tasks.length}. Их можно один раз перенести в общую базу. Исполнители сопоставляются по логину или имени, остальные задачи достанутся вам.</p>
+      <p class="hint">В этом браузере остались задачи из локального режима: ${dev.tasks.length}. Их можно один раз перенести в общую базу. Исполнители сопоставляются по номеру телефона или имени, остальные задачи достанутся вам.</p>
       <button class="btn" type="button" id="importBtn">Перенести задачи: ${dev.tasks.length}</button>
     </section>` : ''}
     <section class="st-sec">
@@ -1299,7 +1358,7 @@ function buildSettings() {
 }
 function renderMeCard() {
   const u = me();
-  $('#meCard').innerHTML = `${avatar(u, 'lg')}<span><b>${esc(u.name)}</b><span class="hint">${esc(u.login || '')} · ${ROLES[u.role]}</span></span>`;
+  $('#meCard').innerHTML = `${avatar(u, 'lg')}<span><b>${esc(u.name)}</b><span class="hint">${esc(fmtLogin(u.login))} · ${ROLES[u.role]}</span></span>`;
 }
 function refreshSettings() {
   if (!!$('#pfSec') !== isAdmin()) { buildSettings(); return; }
@@ -1310,8 +1369,10 @@ function refreshSettings() {
 
 function renderProfiles() {
   const box = $('#pfList'); if (!box) return;
+  // Сначала заявки на вход, затем активные (вы — первым), затем отключённые.
+  const rank = u => u.pending && !u.active ? 0 : u.active ? 1 : 2;
   const users = [...state.db.users].sort((a, b) =>
-    (b.active - a.active) || ((b.id === state.me) - (a.id === state.me)) || a.name.localeCompare(b.name, 'ru'));
+    rank(a) - rank(b) || ((b.id === state.me) - (a.id === state.me)) || a.name.localeCompare(b.name, 'ru'));
   box.innerHTML = users.map(profileHtml).join('') + (state.pfOpen === 'new'
     ? `<div class="pf open">${profileForm(null)}</div>`
     : `<button class="btn ghost block add-pf" type="button" data-pf-new>${icon('plus')}Новый профиль</button>`);
@@ -1319,10 +1380,11 @@ function renderProfiles() {
 function profileHtml(u) {
   const open = state.pfOpen === u.id;
   const n = state.db.tasks.filter(t => t.assigneeId === u.id && t.status !== 'done').length;
-  const sub = [u.login ? esc(u.login) : 'нет входа', ROLES[u.role], u.active ? '' : 'отключён'].filter(Boolean).join(' · ');
-  return `<div class="pf${u.active ? '' : ' off'}${open ? ' open' : ''}">
+  const waiting = u.pending && !u.active;
+  const sub = [u.login ? esc(fmtLogin(u.login)) : 'нет входа', ROLES[u.role], waiting || u.active ? '' : 'отключён'].filter(Boolean).join(' · ');
+  return `<div class="pf${u.active || waiting ? '' : ' off'}${open ? ' open' : ''}">
     <button type="button" class="pf-row" data-pf="${u.id}" aria-expanded="${open}">${avatar(u)}
-      <span class="pf-txt"><b>${esc(u.name)}${u.id === state.me ? '<span class="tag">вы</span>' : ''}</b><span class="hint">${sub}</span></span>
+      <span class="pf-txt"><b>${esc(u.name)}${u.id === state.me ? '<span class="tag">вы</span>' : ''}${waiting ? '<span class="tag">заявка</span>' : ''}</b><span class="hint">${sub}</span></span>
       <span class="cnt" title="Активных задач">${n || ''}</span>${icon('down', 'chev')}</button>
     ${open ? profileForm(u) : ''}</div>`;
 }
@@ -1333,8 +1395,8 @@ function profileForm(u) {
   return `<form class="pf-form" data-pf-form="${id}" novalidate>
     ${u ? '' : '<h4>Новый профиль</h4>'}
     ${fieldHtml(`pf-${id}-name`, 'Имя', 'maxlength="60" autocomplete="off"', u?.name)}
-    ${fieldHtml(`pf-${id}-login`, 'Логин', 'maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false"', u?.login || '')}
-    ${pwFieldHtml(`pf-${id}-pw`, hasLogin ? 'Новый пароль' : 'Пароль', 'new-password', hasLogin ? 'Пусто — не менять' : 'Минимум 6 символов')}
+    ${fieldHtml(`pf-${id}-login`, 'Номер телефона', 'type="tel" inputmode="tel" maxlength="20" autocomplete="off" placeholder="+7 999 123-45-67"', fmtLogin(u?.login))}
+    ${pwFieldHtml(`pf-${id}-pw`, hasLogin ? 'Новый PIN' : 'PIN', 'new-password', hasLogin ? 'Пусто — не менять' : '6 цифр')}
     <div class="field"><label for="pf-${id}-role">Роль</label>
       <select class="input" id="pf-${id}-role"${lastAdmin ? ` disabled aria-describedby="pf-${id}-rh"` : ''}>
         ${Object.entries(ROLES).map(([k, v]) => `<option value="${k}"${(u?.role || 'user') === k ? ' selected' : ''}>${v}</option>`).join('')}
@@ -1343,7 +1405,7 @@ function profileForm(u) {
     <div class="row-actions">
       <button class="btn primary sm" type="submit">${u ? 'Сохранить' : 'Создать'}</button>
       <button class="btn ghost sm" type="button" data-pf-cancel>Отмена</button>
-      ${u && u.id !== state.me ? `<button class="btn ghost sm push${u.active ? ' danger' : ''}" type="button" data-pf-toggle="${u.id}">${u.active ? 'Отключить' : 'Включить'}</button>` : ''}
+      ${u && u.id !== state.me ? `<button class="btn sm push${u.active ? ' ghost danger' : u.pending ? ' primary' : ' ghost'}" type="button" data-pf-toggle="${u.id}">${u.active ? 'Отключить' : u.pending ? 'Одобрить' : 'Включить'}</button>` : ''}
     </div></form>`;
 }
 function openProfile(id) {
@@ -1361,12 +1423,13 @@ function closeProfile() {
 async function toggleActive(btn, id) {
   const u = user(id), on = !u.active;
   const data = { name: u.name, login: u.login, role: u.role, active: on, password: '' };
-  btnBusy(btn, true, on ? 'Включаем…' : 'Отключаем…');
+  btnBusy(btn, true, on ? (u.pending ? 'Одобряем…' : 'Включаем…') : 'Отключаем…');
   try { await backend.saveUser(id, data); }
   catch (e) { btnBusy(btn, false); setFormErr(id, errText(e)); return; }
   state.pfOpen = null;
   render(); renderProfiles();
   $(`[data-pf="${id}"]`)?.focus({ preventScroll: true });
+  if (on && u.pending) toast(`${u.name}: доступ открыт`);
   if (!on) toast(`${u.name}: профиль отключён`, async () => {
     try { await backend.saveUser(id, { ...data, active: true }); render(); } catch (e) { toast(errText(e)); }
   });
@@ -1376,10 +1439,10 @@ function setFormErr(id, msg) { const box = $(`#pf-${id}-form-err`); if (box) { b
 async function importDeviceTasks(btn) {
   const src = deviceTasks(); if (!src) return;
   const users = src.users || [];
-  // Исполнитель с устройства → профиль в базе: по логину, затем по имени; иначе — текущий пользователь.
+  // Исполнитель с устройства → профиль в базе: по номеру, затем по имени; иначе — текущий пользователь.
   const map = localId => {
     const lu = users.find(x => x.id === localId); if (!lu) return state.me;
-    const byLogin = lu.login && state.db.users.find(x => x.login === lu.login.toLowerCase());
+    const byLogin = lu.login && state.db.users.find(x => x.login === loginKey(lu.login));
     const byName = state.db.users.find(x => x.name.trim().toLowerCase() === lu.name.trim().toLowerCase());
     return (byLogin || byName)?.id || state.me;
   };
@@ -1421,7 +1484,7 @@ $('#stBody').addEventListener('submit', async e => {
     if (name !== me().name && await ops.patchSelf({ name })) toast('Имя сохранено');
   } else if (f.id === 'pwForm') {
     const o = $('#stPwOld'), n = $('#stPwNew');
-    const okO = setErr(o, o.value ? '' : 'Введите текущий пароль'), okN = setErr(n, pwError(n.value));
+    const okO = setErr(o, o.value ? '' : 'Введите текущий PIN'), okN = setErr(n, pinError(n.value));
     if (!okO) return o.focus();
     if (!okN) return n.focus();
     btnBusy(btn, true, 'Сохраняем…');
@@ -1434,7 +1497,7 @@ $('#stBody').addEventListener('submit', async e => {
     }
     btnBusy(btn, false);
     o.value = ''; n.value = ''; $('#pwFold').open = false;
-    toast('Пароль изменён');
+    toast('PIN изменён');
   } else if (f.dataset.pfForm) submitProfile(f, btn);
 });
 async function submitProfile(f, btn) {
@@ -1445,7 +1508,7 @@ async function submitProfile(f, btn) {
   const check = (input, msg) => { if (!setErr(input, msg) && !bad) bad = input; };
   check(el('name'), name ? '' : 'Введите имя');
   check(el('login'), loginError(login, u?.id));
-  check(el('pw'), pw || isNew || !u.login ? pwError(pw) : '');
+  check(el('pw'), pw || isNew || !u.login ? pinError(pw) : '');
   setFormErr(id, '');
   if (bad) return bad.focus();
   const data = { name, login, role: roleSel.disabled ? u.role : roleSel.value, active: u ? u.active : true, password: pw };
@@ -1455,8 +1518,8 @@ async function submitProfile(f, btn) {
   catch (err) {
     btnBusy(btn, false);
     const msg = errText(err);
-    if (/логин/i.test(msg)) { setErr(el('login'), msg); el('login').focus(); }
-    else if (/парол/i.test(msg)) { setErr(el('pw'), msg); el('pw').focus(); }
+    if (/номер/i.test(msg)) { setErr(el('login'), msg); el('login').focus(); }
+    else if (/PIN/.test(msg)) { setErr(el('pw'), msg); el('pw').focus(); }
     else setFormErr(id, msg);
     return;
   }
