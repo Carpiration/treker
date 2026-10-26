@@ -9,6 +9,7 @@
     python tools/db.py users                          профили, включая заявки на вход
     python tools/db.py list [--who КТО] [--done]
     python tools/db.py add "Название" [--to КТО] [--desc "..."] [--status todo|doing|done]
+    python tools/db.py add-many ФАЙЛ [--to КТО]       по задаче на строку; пустые строки пропускаются
     python tools/db.py set ID [--title ...] [--desc ...] [--status ...] [--to КТО]
     python tools/db.py delete ID
 КТО — номер телефона или часть имени. ID можно сокращать до первых символов (как в выводе list).
@@ -139,6 +140,25 @@ def cmd_add(a):
     print(f"Добавлено: {t['id'][:8]}  {t['title']} → {to['name']}")
 
 
+def cmd_add_many(a):
+    titles = [ln.strip() for ln in Path(a.file).read_text(encoding="utf-8").splitlines() if ln.strip()]
+    if not titles:
+        sys.exit("В файле нет задач.")
+    if any(len(t) > 200 for t in titles):
+        sys.exit("Есть строки длиннее 200 символов — сократите их или перенесите детали в описание.")
+    people = users()
+    admins = [u for u in people if u["role"] == "admin" and u["active"]]
+    if not admins:
+        sys.exit("В базе нет администратора — сначала зарегистрируйтесь на сайте.")
+    to = find_user(a.to, people) if a.to else admins[0]
+    # Одним запросом: либо добавятся все, либо ни одной — повторный запуск не создаст дублей наполовину.
+    rows = api("POST", "tasks", [{"title": t, "descr": "", "status": "todo", "assignee_id": to["id"],
+                                  "author_id": admins[0]["id"]} for t in titles])
+    for t in rows:
+        print(f"{t['id'][:8]}  {t['title']}")
+    print(f"Добавлено: {len(rows)} → {to['name']}")
+
+
 def cmd_set(a):
     tid = find_task(a.id)
     patch = {"updated_at": now()}
@@ -170,6 +190,8 @@ def main():
     s = sub.add_parser("add"); s.set_defaults(fn=cmd_add)
     s.add_argument("title"); s.add_argument("--to"); s.add_argument("--desc")
     s.add_argument("--status", default="todo", choices=STATUS)
+    s = sub.add_parser("add-many"); s.set_defaults(fn=cmd_add_many)
+    s.add_argument("file"); s.add_argument("--to")
     s = sub.add_parser("set"); s.set_defaults(fn=cmd_set)
     s.add_argument("id"); s.add_argument("--title"); s.add_argument("--desc"); s.add_argument("--to")
     s.add_argument("--status", choices=STATUS)

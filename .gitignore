@@ -11,3 +11,5 @@ android/build/
 .DS_Store
 Thumbs.db
 __pycache__/
+# Рабочие списки задач — только в базе, не в публичном репозитории
+backlog*.txt
