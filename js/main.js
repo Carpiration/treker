@@ -72,3 +72,5 @@ async function boot() {
 }
 $('#bootRetry').addEventListener('click', boot);
 boot();
+// Service worker нужен для пушей (и установки на главный экран); в Android-оболочке пушей нет.
+if ('serviceWorker' in navigator && !window.TrekerBridge) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));

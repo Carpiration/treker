@@ -97,6 +97,12 @@ function cloudBackend() {
       return path;
     },
     async removeAvatar(path) { await sb.storage.from('avatars').remove([path]).catch(() => {}); },
+    async removePush(endpoint) { ok(await sb.from('push_subscriptions').delete().eq('endpoint', endpoint)); },
+    async pushTest() {
+      const { data, error } = await sb.functions.invoke('push', { body: { op: 'test' } });
+      if (error) throw error;
+      return data;
+    },
     async markRead() { ok(await sb.from('notifications').update({ read_at: new Date().toISOString() }).eq('user_id', uid).is('read_at', null)); },
     async clearRead() { ok(await sb.from('notifications').delete().eq('user_id', uid).not('read_at', 'is', null)); },
     insertTasks(list) { return this.insert('tasks', list); },

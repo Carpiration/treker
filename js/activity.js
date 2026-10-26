@@ -30,6 +30,8 @@ function renderBell() {
   b.querySelector('.bell-n').textContent = n > 99 ? '99+' : n || '';
   b.classList.toggle('has-n', n > 0);
   b.setAttribute('aria-label', n ? `Уведомления: ${n} новых` : 'Уведомления');
+  // Число на значке установленного приложения (где браузер это умеет).
+  try { n ? navigator.setAppBadge?.(n) : navigator.clearAppBadge?.(); } catch {}
 }
 $('#bellBtn').addEventListener('click', () => openPage('notes'));
 
@@ -72,12 +74,16 @@ function buildNotesPage() {
   }
   const read = notes.some(n => n.readAt);
   $('#stBody').innerHTML = `<section class="st-sec" aria-label="Уведомления">
+    ${pushCardHtml()}
     ${notes.length ? `<div class="ntfs">${html}</div>` : `<div class="empty">${icon('bell')}<span>Уведомлений нет. Здесь появится, когда кто-то назначит вам задачу, сменит её статус или передаст задачу.</span></div>`}
     ${read ? `<button class="btn ghost sm" type="button" id="clearNotes">Убрать прочитанные</button>` : ''}
   </section>`;
 }
 // Открыли список — новые помечаются прочитанными (подсветка остаётся до закрытия окна).
-function afterNotesOpen() { if (unread()) ops.markRead().then(renderBell); }
+function afterNotesOpen() {
+  if (unread()) ops.markRead().then(renderBell);
+  pushRefresh().then(refreshNotesPush);
+}
 
 async function answerTransfer(id, accept, btn) {
   btnBusy(btn, true, accept ? 'Принимаем…' : 'Отклоняем…');

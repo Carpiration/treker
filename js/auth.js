@@ -79,6 +79,8 @@ function enter(id) {
   render({ flip: false });
   // На телефоне автофокус сразу открывал бы клавиатуру поверх списка.
   if (finePointer()) $('#nTitle').focus();
+  pushRefresh(true);  // подписка этого браузера — за вошедшим человеком
+  openFromPush();
 }
 async function logout(msg) {
   if (openMenu) setMenu(openMenu, false);
@@ -86,6 +88,7 @@ async function logout(msg) {
   const d = $('#settings'); if (d.open) { d.classList.remove('closing'); d.close(); }
   state.me = null; state.editing = null;
   $$('#toasts .toast').forEach(t => t.remove());
+  await pushForget();
   await backend.logout();
   showAuth(msg);
 }

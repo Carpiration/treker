@@ -438,6 +438,16 @@ input[type=range]:disabled{cursor:default}
 .bell.has-n{color:var(--text)}
 .am-n{color:var(--faint);font-size:12px;font-variant-numeric:tabular-nums}
 
+/* ---------- пуши на этом устройстве ---------- */
+.push-card{display:flex;gap:12px;padding:12px;border:1px solid var(--border-strong);border-radius:var(--r);background:var(--surface-2)}
+.push-card.on{border-color:color-mix(in srgb,var(--st-done) 45%,transparent);background:color-mix(in srgb,var(--st-done) 7%,var(--surface-2))}
+.push-card.warn{border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
+.push-ic{display:grid;place-items:center;width:34px;height:34px;flex:none;border-radius:50%;background:var(--accent-soft);color:var(--accent)}
+.push-card.on .push-ic{background:color-mix(in srgb,var(--st-done) 18%,transparent);color:var(--st-done)}
+.push-txt{display:grid;gap:3px;min-width:0}
+.push-txt b{font-weight:600}
+.push-txt .row-actions{margin-top:8px}
+
 /* ---------- лента: уведомления и журнал ---------- */
 .day-h{position:sticky;top:0;z-index:1;margin:14px -18px 4px;padding:6px 18px;background:var(--surface);color:var(--faint);font-size:11.5px;font-weight:650;letter-spacing:.06em;text-transform:uppercase}
 .day-h:first-child{margin-top:0}
