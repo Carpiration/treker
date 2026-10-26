@@ -73,7 +73,10 @@ function refreshSettings() {
   const a = document.activeElement;
   if (a && $('#stBody').contains(a) && a.matches('input:not([type=checkbox]),textarea,select')) return;
   if (state.page === 'users' && state.pfOpen) return;
+  // После перестройки возвращаем фокус на тот же переключатель (иначе он уходит в начало страницы).
+  const id = a && $('#stBody').contains(a) ? a.id : '';
   buildSettings();
+  if (id) document.getElementById(id)?.focus({ preventScroll: true });
 }
 function closeDlg(d) {
   if (!d.open || d.classList.contains('closing')) return;
@@ -204,19 +207,19 @@ function segHtml(name, value, opts) {
 }
 // Предпросмотр — те же классы, что у настоящих задач (вид задаётся классами на <body>).
 function previewCards() {
-  const view = pref('statusView'), demo = [
-    ['todo', 'Купить подарки', 'Список — в заметках, бюджет до пятницы'],
-    ['doing', 'Подготовить презентацию', ''],
-    ['done', 'Созвон в 15:00', 'Итоги — в общем чате'],
+  const view = pref('statusView'), who = pref('showAssignee'), demo = [
+    ['todo', 'Купить подарки', 'Список — в заметках, бюджет до пятницы', me()],
+    ['doing', 'Подготовить презентацию', '', { id: 'demo-a', name: 'Аня', avatar: 'preset:2' }],
+    ['done', 'Созвон в 15:00', 'Итоги — в общем чате', { id: 'demo-b', name: 'Макс', avatar: 'preset:9' }],
   ];
-  return demo.map(([s, title, desc], i) => {
+  return demo.map(([s, title, desc, u], i) => {
     const st = statusOf(s);
     const status = view === 'hide' ? '' : view === 'dot'
       ? `<span class="st st-ind ro" data-s="${s}" title="${st.label}"><span class="dot"></span></span>`
       : `<span class="st ro" data-s="${s}">${statusIcon(s)}<span class="lbl">${st.label}</span></span>`;
     return `<div class="task${s === 'done' ? ' done' : ''}" data-s="${s}" style="--ro:${i * 97 + 40}deg"><span class="t-fx" aria-hidden="true"></span>
       <div class="t-head"><span class="t-main"><span class="t-title">${title}</span>${desc ? `<span class="t-sub">${desc}</span>` : ''}</span>
-      <div class="t-side">${status}</div></div></div>`;
+      <div class="t-side">${who ? `<span class="av-btn ro">${avatar(u)}</span>` : ''}${status}</div></div></div>`;
   }).join('');
 }
 function buildLookPage() {
@@ -248,7 +251,8 @@ function buildLookPage() {
     <section class="st-sec" aria-labelledby="lkMoreH">
       <h3 class="sub-h" id="lkMoreH">Ещё</h3>
       <label class="switch-row"><span class="txt"><span>Показывать, чья задача</span>
-        <span class="hint">Аватар исполнителя в строке задачи группы</span></span>
+        <span class="hint">Аватар исполнителя в строке задачи — в группах (в «Моих задачах» все задачи ваши).${
+          state.db.groups.some(g => isMember(g.id)) ? '' : ' Сейчас вы не состоите ни в одной группе — аватар виден только в предпросмотре выше.'}</span></span>
         <input type="checkbox" class="switch" role="switch" id="prefAssignee"${pref('showAssignee') ? ' checked' : ''}></label>
     </section>`;
   syncPad();  // точка свечения на мини-экране
