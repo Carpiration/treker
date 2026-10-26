@@ -2,11 +2,16 @@
 -- Выполнить целиком в Supabase → SQL Editor. Повторный запуск безопасен (обновляет функции и правила).
 --
 -- Вход — по номеру телефона и PIN. Номер (только цифры, 7XXXXXXXXXX) хранится как служебный e-mail
--- <номер>@<loginDomain из config.js>; писем на него не отправляется,
--- поэтому в Authentication → Sign In / Providers → Email нужно выключить «Confirm email».
+-- <номер>@<домен из app_email_domain()>, писем на него не отправляется.
+-- Пользователей создаёт сама база (register_user / admin_create_user), а не регистрация Supabase Auth:
+-- так вход не зависит от проверки домена e-mail и от настройки «Confirm email».
 -- Первый зарегистрированный становится администратором; остальные ждут одобрения (pending).
 
 create extension if not exists pgcrypto with schema extensions;
+
+-- Домен служебных адресов. Должен совпадать с loginDomain в config.js. После создания профилей не менять.
+create or replace function public.app_email_domain() returns text
+language sql immutable set search_path = '' as $$ select 'treker.local' $$;
 
 -- ---------- таблицы ----------
 create table if not exists public.profiles (
@@ -17,14 +22,6 @@ create table if not exists public.profiles (
   active     boolean not null default true,
   pending    boolean not null default false,
   prefs      jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
-);
-
--- Приглашение администратора: регистрация с этим логином сразу получает активный профиль.
-create table if not exists public.invites (
-  login      text primary key check (login ~ '^[a-z0-9._-]{3,32}$'),
-  name       text not null check (char_length(name) between 1 and 60),
-  role       text not null default 'user' check (role in ('user', 'admin')),
   created_at timestamptz not null default now()
 );
 
@@ -39,8 +36,11 @@ create table if not exists public.tasks (
   updated_at  timestamptz not null default now(),
   done_at     timestamptz
 );
-alter table public.profiles add column if not exists pending boolean not null default false;
 create index if not exists tasks_assignee_idx on public.tasks (assignee_id);
+create index if not exists tasks_author_idx on public.tasks (author_id);
+
+-- Приглашения прежней версии больше не нужны: сотрудников администратор создаёт функцией admin_create_user.
+drop table if exists public.invites;
 
 -- ---------- проверки прав ----------
 create or replace function public.is_active() returns boolean
@@ -61,20 +61,15 @@ $$;
 
 -- ---------- правила доступа (RLS) ----------
 alter table public.profiles enable row level security;
-alter table public.invites  enable row level security;
 alter table public.tasks    enable row level security;
 
 drop policy if exists "profiles: чтение" on public.profiles;
 create policy "profiles: чтение" on public.profiles for select to authenticated
-  using (public.is_active() or id = auth.uid());
+  using (public.is_active() or id = (select auth.uid()));
 
 drop policy if exists "profiles: своё имя и настройки" on public.profiles;
 create policy "profiles: своё имя и настройки" on public.profiles for update to authenticated
-  using (id = auth.uid() and public.is_active()) with check (id = auth.uid());
-
-drop policy if exists "invites: администратор" on public.invites;
-create policy "invites: администратор" on public.invites for all to authenticated
-  using (public.is_admin()) with check (public.is_admin());
+  using (id = (select auth.uid()) and public.is_active()) with check (id = (select auth.uid()));
 
 drop policy if exists "tasks: чтение" on public.tasks;
 create policy "tasks: чтение" on public.tasks for select to authenticated using (public.is_active());
@@ -87,32 +82,28 @@ drop policy if exists "tasks: удаление" on public.tasks;
 create policy "tasks: удаление" on public.tasks for delete to authenticated using (public.is_active());
 
 -- Права на уровне колонок: себе можно менять только имя и настройки; роль, логин и доступ — через admin_save_user.
-revoke all on public.profiles, public.invites, public.tasks from anon, authenticated;
+revoke all on public.profiles, public.tasks from anon, authenticated;
 grant select on public.profiles to authenticated;
 grant update (name, prefs) on public.profiles to authenticated;
-grant select, insert, update, delete on public.invites to authenticated;
 grant select, insert, delete on public.tasks to authenticated;
 grant update (title, descr, status, assignee_id, updated_at, done_at) on public.tasks to authenticated;
 
 -- ---------- новый пользователь ----------
--- Первый зарегистрированный (пока нет администратора) становится администратором.
--- Приглашённые администратором сразу активны; зарегистрировавшиеся сами — ждут одобрения и до него ничего не видят.
+-- Профиль создаётся триггером на auth.users.
+-- Первый (пока нет администратора) — администратор. Созданные администратором сразу активны:
+-- это отмечено в raw_app_meta_data, которое клиент сам задать не может. Остальные ждут одобрения.
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
   lg  text := lower(split_part(new.email, '@', 1));
   nm  text := left(coalesce(nullif(trim(new.raw_user_meta_data ->> 'name'), ''), lg), 60);
-  inv public.invites%rowtype;
+  by_admin boolean := coalesce(new.raw_app_meta_data ->> 'treker_by_admin', '') = 'true';
+  rl  text := case when new.raw_app_meta_data ->> 'treker_role' = 'admin' then 'admin' else 'user' end;
 begin
   if not exists (select 1 from public.profiles where role = 'admin' and active) then
-    insert into public.profiles (id, name, login, role, active)
-    values (new.id, nm, lg, 'admin', true);
-    return new;
-  end if;
-  select * into inv from public.invites where login = lg;
-  if found then
-    insert into public.profiles (id, name, login, role, active) values (new.id, inv.name, lg, inv.role, true);
-    delete from public.invites where login = lg;
+    insert into public.profiles (id, name, login, role, active) values (new.id, nm, lg, 'admin', true);
+  elsif by_admin then
+    insert into public.profiles (id, name, login, role, active) values (new.id, nm, lg, rl, true);
   else
     insert into public.profiles (id, name, login, role, active, pending) values (new.id, nm, lg, 'user', false, true);
   end if;
@@ -122,6 +113,71 @@ end $$;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- Создание записи входа (auth.users + auth.identities). Только для функций ниже, клиенту недоступно.
+create or replace function public.create_login(p_login text, p_pin text, p_name text, p_app jsonb)
+returns uuid
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  uid  uuid := gen_random_uuid();
+  mail text := p_login || '@' || public.app_email_domain();
+begin
+  if exists (select 1 from auth.users where email = mail) or exists (select 1 from public.profiles where login = p_login) then
+    raise exception 'Этот номер уже зарегистрирован';
+  end if;
+  insert into auth.users (
+    instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+    raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+    confirmation_token, recovery_token, email_change_token_new, email_change,
+    email_change_token_current, phone_change, phone_change_token, reauthentication_token
+  ) values (
+    '00000000-0000-0000-0000-000000000000', uid, 'authenticated', 'authenticated', mail,
+    crypt(p_pin, gen_salt('bf')), now(),
+    jsonb_build_object('provider', 'email', 'providers', jsonb_build_array('email')) || coalesce(p_app, '{}'::jsonb),
+    jsonb_build_object('name', p_name), now(), now(),
+    '', '', '', '', '', '', '', ''
+  );
+  insert into auth.identities (provider_id, user_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+  values (uid::text, uid,
+    jsonb_build_object('sub', uid::text, 'email', mail, 'email_verified', true, 'phone_verified', false),
+    'email', now(), now(), now());
+  return uid;
+end $$;
+revoke execute on function public.create_login(text, text, text, jsonb) from public, anon, authenticated;
+
+-- Проверки полей, общие для регистрации и создания сотрудника.
+create or replace function public.check_new_login(p_name text, p_login text, p_pin text) returns void
+language plpgsql immutable set search_path = '' as $$
+begin
+  if coalesce(trim(p_name), '') = '' or char_length(trim(p_name)) > 60 then raise exception 'Введите имя (до 60 символов)'; end if;
+  if coalesce(p_login, '') !~ '^\d{11,15}$' then raise exception 'Номер целиком, например +7 999 123-45-67'; end if;
+  if coalesce(p_pin, '') !~ '^\d{6}$' then raise exception 'PIN — ровно 6 цифр'; end if;
+end $$;
+
+-- Регистрация. Доступна до входа. Возвращает, активен ли профиль сразу (первый — администратор).
+create or replace function public.register_user(p_name text, p_phone text, p_pin text) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare uid uuid;
+begin
+  perform public.check_new_login(p_name, p_phone, p_pin);
+  -- Защита от засорения заявками: одобрять их всё равно вручную.
+  if (select count(*) from public.profiles where pending and not active) >= 50 then
+    raise exception 'Слишком много заявок ждут одобрения. Попросите администратора разобрать их.';
+  end if;
+  uid := public.create_login(p_phone, p_pin, trim(p_name), '{}'::jsonb);
+  return (select active from public.profiles where id = uid);
+end $$;
+
+-- Новый сотрудник от администратора: сразу активен, одобрение не нужно.
+create or replace function public.admin_create_user(p_name text, p_phone text, p_pin text, p_role text) returns uuid
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Нет прав администратора' using errcode = '42501'; end if;
+  perform public.check_new_login(p_name, p_phone, p_pin);
+  if p_role not in ('user', 'admin') then raise exception 'Неизвестная роль'; end if;
+  return public.create_login(p_phone, p_pin, trim(p_name),
+    jsonb_build_object('treker_by_admin', 'true', 'treker_role', p_role));
+end $$;
 
 -- ---------- изменение профиля администратором ----------
 create or replace function public.admin_save_user(
@@ -140,10 +196,9 @@ begin
   if p_name = '' or char_length(p_name) > 60 then raise exception 'Введите имя (до 60 символов)'; end if;
   if p_login !~ '^[a-z0-9._-]{3,32}$' then raise exception 'Некорректный номер телефона'; end if;
   if p_role not in ('user', 'admin') then raise exception 'Неизвестная роль'; end if;
-  if coalesce(p_password, '') <> '' and char_length(p_password) < 6 then raise exception 'PIN — 6 цифр'; end if;
+  if coalesce(p_password, '') <> '' and p_password !~ '^\d{6}$' then raise exception 'PIN — ровно 6 цифр'; end if;
   if not exists (select 1 from public.profiles where id = target) then raise exception 'Профиль не найден'; end if;
-  if exists (select 1 from public.profiles where login = p_login and id <> target)
-     or exists (select 1 from public.invites where login = p_login) then
+  if exists (select 1 from public.profiles where login = p_login and id <> target) then
     raise exception 'Этот номер уже зарегистрирован';
   end if;
   if target = auth.uid() and not p_active then raise exception 'Нельзя отключить свой профиль'; end if;
@@ -168,10 +223,17 @@ begin
   where user_id = target and provider = 'email';
 end $$;
 
+-- ---------- права на функции ----------
+revoke execute on function public.register_user(text, text, text) from public;
+grant execute on function public.register_user(text, text, text) to anon, authenticated;
+revoke execute on function public.admin_create_user(text, text, text, text) from public, anon;
+grant execute on function public.admin_create_user(text, text, text, text) to authenticated;
 revoke execute on function public.admin_save_user(uuid, text, text, text, boolean, text) from public, anon;
 grant execute on function public.admin_save_user(uuid, text, text, text, boolean, text) to authenticated;
 revoke execute on function public.is_active(), public.is_admin() from public, anon;
 grant execute on function public.is_active(), public.is_admin() to authenticated;
+revoke execute on function public.handle_new_user() from public, anon, authenticated;
+revoke execute on function public.check_new_login(text, text, text) from public, anon, authenticated;
 grant execute on function public.needs_setup() to anon, authenticated;
 
 -- ---------- обновления в реальном времени ----------

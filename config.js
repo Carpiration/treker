@@ -1,10 +1,9 @@
 // Подключение к Supabase (см. docs/SUPABASE.md).
-// Пустые значения — приложение работает локально: данные только в этом браузере, без синхронизации.
-// Publishable (anon) ключ публичный по назначению: доступ к данным защищают правила RLS из supabase/schema.sql.
-// Секретный ключ (service_role / sb_secret_…) сюда класть нельзя.
+// Publishable-ключ публичный по назначению: доступ к данным защищают правила RLS из supabase/schema.sql.
+// Секретный ключ (sb_secret_…) сюда класть нельзя.
 window.TREKER_CONFIG = {
-  supabaseUrl: '',
-  supabaseKey: '',
-  // Домен для служебных e-mail вида <логин>@<домен>. После создания первых профилей не менять.
+  supabaseUrl: 'https://sddozpkibkguwbwwfmqk.supabase.co',
+  supabaseKey: 'sb_publishable_2O3BFUab55cJqwz3VfhpHg_wXM7L4Cu',
+  // Домен служебных e-mail вида <номер>@<домен>. Совпадает с app_email_domain() в supabase/schema.sql. Не менять.
   loginDomain: 'treker.local',
 };
