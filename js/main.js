@@ -39,6 +39,7 @@ window.appBack = () => {
   if (openMenu) { setMenu(openMenu, false); return true; }
   if (ctxOpen()) { closeCtx(true); return true; }
   if (appMenuOpen()) { closeAppMenu(true); return true; }
+  if (state.fpOpen && !$('#settings').open) { setPicker(false, true); return true; }
   const d = $('#settings');
   if (d.open) { if (state.pfOpen) closeProfile(); else closeDlg(d); return true; }
   if (state.editing) { cancelEdit(); return true; }

@@ -315,7 +315,9 @@ function buildFoldersPage() {
         <input class="input" id="f-${f.id}-name" value="${esc(f.name)}" maxlength="40" autocomplete="off"${f.kind === 'transfers' ? ' readonly title="Служебная папка: сюда приходят переданные вам задачи"' : ''}></form>
       <label class="eye-tg" title="${f.hidden ? 'Скрыта от других' : 'Видна другим'}"><input type="checkbox" class="sr-only" data-f-hide="${f.id}"${f.hidden ? '' : ' checked'}>
         ${icon(f.hidden ? 'eye-off' : 'eye')}<span class="sr-only">Видна другим</span></label>
-      ${f.kind === 'transfers' ? '' : `<button type="button" class="icon-btn danger-ic" data-f-del="${f.id}" aria-label="${state.confirmDel === f.id ? 'Точно удалить папку' : 'Удалить папку'}" title="${state.confirmDel === f.id ? 'Нажмите ещё раз — задачи останутся в «Без папки»' : 'Удалить папку'}">${state.confirmDel === f.id ? icon('check') : icon('trash')}</button>`}
+      ${f.kind === 'transfers' ? '' : state.confirmDel === f.id
+        ? `<button type="button" class="btn sm danger-solid" data-f-del="${f.id}" title="Задачи перейдут в «Без папки»">${icon('trash')}Удалить?</button>`
+        : `<button type="button" class="icon-btn danger-ic" data-f-del="${f.id}" aria-label="Удалить папку" title="Удалить папку">${icon('trash')}</button>`}
     </div>`).join('');
   $('#stBody').innerHTML = `<section class="st-sec" aria-label="Мои папки">
     <p class="hint">Папки — внутри «Мои задачи». Другие люди могут смотреть ваши задачи; скрытую папку не видит никто, даже администратор.</p>
@@ -440,10 +442,8 @@ $('#stBody').addEventListener('click', e => {
   if (fd) {
     const id = fd.dataset.fDel;
     if (state.confirmDel !== id) { state.confirmDel = id; buildSettings(); $(`[data-f-del="${id}"]`)?.focus(); return; }
-    const name = folder(id)?.name;
     state.confirmDel = null;
-    if (state.folder === id) state.folder = 'all';
-    ops.removeFolder(id).then(okk => okk && toast(`Папка «${name}» удалена, задачи — в «Без папки»`));
+    deleteFolder(id);
     return;
   }
   const imp = e.target.closest('#importBtn'); if (imp) return importDeviceTasks(imp);

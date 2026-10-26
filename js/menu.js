@@ -110,9 +110,10 @@ function hoverTask(id) {
   underPointer = id;
   clearTimeout(peekOpenT);
   if (id && id === state.hoverId) { clearTimeout(peekCloseT); return; }
-  if (state.hoverId) { clearTimeout(peekCloseT); peekCloseT = setTimeout(() => { state.hoverId = null; applyPeek(); }, 100); }
-  // Небольшая задержка: проводя курсором по списку, не раскрываем каждую строку.
-  if (id) peekOpenT = setTimeout(() => { clearTimeout(peekCloseT); state.hoverId = id; applyPeek(); }, state.hoverId ? 140 : 200);
+  // Закрываем не сразу: курсор, ненадолго соскочивший со строки, не «схлопывает» её.
+  if (state.hoverId) { clearTimeout(peekCloseT); peekCloseT = setTimeout(() => { state.hoverId = null; applyPeek(); }, 220); }
+  // Задержка перед раскрытием: проводя курсором по списку, не раскрываем каждую строку.
+  if (id) peekOpenT = setTimeout(() => { clearTimeout(peekCloseT); state.hoverId = id; applyPeek(); }, state.hoverId ? 260 : 320);
 }
 function openIds() { return new Set([state.hoverId, state.kbdId, state.tapId, state.editing].filter(Boolean)); }
 function applyPeek() {
@@ -150,11 +151,11 @@ function ctxItems(t) {
   return h;
 }
 // Меню у точки (x, y): задачи или папки. onPick(действие, значение, кнопка) — что делать с выбранным пунктом.
-let ctxPick = null;
+let ctxPick = null, ctxAt = { x: 0, y: 0 };
 function showCtx(html, x, y, byKey, onPick, label) {
   if (openMenu) setMenu(openMenu, false);
   closeAppMenu();
-  ctxPick = onPick;
+  ctxPick = onPick; ctxAt = { x, y };
   const m = $('#ctx');
   m.setAttribute('aria-label', label);
   m.innerHTML = html;
@@ -203,18 +204,33 @@ function openFolderCtx(fid, x, y, byKey = false) {
   }
   showCtx(html, x, y, byKey, (act, v, b) => folderAction(fid, act, b), 'Действия с папкой');
 }
+// Подтверждение удаления — прямо в том же меню, на том же месте.
+function confirmFolderDel(fid) {
+  const f = folder(fid); if (!f) return;
+  const n = state.db.tasks.filter(t => t.folderId === fid && !t.deletedAt).length;
+  const it = (act, html, cls = '') => `<button type="button" class="menu-item${cls}" role="menuitem" data-ctx="${act}">${html}</button>`;
+  const html = labelHtml(`Удалить «${f.name}»?`)
+    + `<p class="menu-note">${n ? `Задачи (${n}) не удалятся — перейдут в «Без папки».` : 'Папка пустая.'}</p>`
+    + it('del-yes', `${icon('trash')}Удалить папку`, ' danger') + it('del-no', `${icon('x')}Отмена`);
+  showCtx(html, ctxAt.x, ctxAt.y, true, act => folderAction(fid, act), 'Удаление папки');
+}
+function deleteFolder(id) {
+  const name = folder(id)?.name;
+  if (state.folder === id) state.folder = 'all';
+  return ops.removeFolder(id).then(okk => okk && toast(`Папка «${name}» удалена, задачи — в «Без папки»`));
+}
 function folderAction(fid, act, b) {
+  if (act === 'del') return confirmFolderDel(fid);
+  if (act === 'del-no') return;
+  if (act === 'del-yes') return deleteFolder(fid);
   if (act === 'hide') {
     if (fid === 'root') return ops.patchSelf({ rootHidden: !me().rootHidden }).then(okk => okk && toast(me().rootHidden ? 'Задачи без папки скрыты от других' : 'Задачи без папки видны другим'));
     const f = folder(fid);
     return ops.patchFolder(fid, { hidden: !f.hidden }).then(okk => okk && toast(f.hidden ? `«${f.name}» скрыта от всех` : `«${f.name}» видна другим`));
   }
   setPicker(false);
-  if (act === 'rename' || act === 'del') {
-    openPage('folders');
-    if (act === 'del') { state.confirmDel = fid; buildSettings(); $(`[data-f-del="${fid}"]`)?.focus(); }
-    else { const i = $(`#f-${fid}-name`); i?.focus(); i?.select(); }
-  } else if (act === 'give') openGiveFolder(fid);
+  if (act === 'rename') { openPage('folders'); const i = $(`#f-${fid}-name`); i?.focus(); i?.select(); }
+  else if (act === 'give') openGiveFolder(fid);
   else if (act === 'cancel-ft') cancelTransfer(pendingFolderTransfer(fid)?.id, b);
 }
 function closeCtx(focusTask) {

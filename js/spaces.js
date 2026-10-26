@@ -184,6 +184,8 @@ $('#chips').addEventListener('keydown', e => {
   }
 });
 // Клик или касание мимо списка — закрыть.
+// Esc закрывает список папок, даже если фокус ушёл из него (например, после меню папки).
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.fpOpen && !e.defaultPrevented && !$('#settings').open && !ctxOpen()) { e.preventDefault(); setPicker(false, true); } });
 document.addEventListener('pointerdown', e => { if (state.fpOpen && !e.target.closest('#chips') && !e.target.closest('#ctx')) setPicker(false); });
 function createFolder(name) {
   name = name.trim();
