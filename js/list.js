@@ -38,7 +38,6 @@ function taskHtml(t) {
   const head = editing
     ? `<textarea class="t-title-input" id="et-${t.id}" rows="1" maxlength="200" autocomplete="off" aria-label="Название задачи" aria-describedby="et-${t.id}-err">${esc(t.title)}</textarea>`
     : `<button type="button" class="t-main" data-main="${t.id}" aria-expanded="${open}" aria-controls="tm-${t.id}"><span class="t-title">${esc(t.title)}</span>${
-      t.images?.length ? `<span class="t-att" title="Изображений: ${t.images.length}">${icon('image')}${t.images.length}</span>` : ''}${
       t.desc ? `<span class="t-sub">${esc(t.desc.replace(/\s+/g, ' ').slice(0, 240))}</span>` : ''}${
       view === 'hide' ? `<span class="sr-only">, ${s.label}</span>` : ''}</button>`;
   const meta = [
@@ -72,7 +71,10 @@ function taskHtml(t) {
   const prHtml = !pr ? '' : rw
     ? `<button type="button" class="t-pr" data-pr="${t.id}" aria-label="${prLbl}. Сделать «${t.important ? 'Потом' : 'Важно'}»" title="${prLbl} — нажмите, чтобы сделать «${t.important ? 'Потом' : 'Важно'}»"><span>${prLbl}</span></button>`
     : `<span class="t-pr ro" title="${prLbl}"><span>${prLbl}</span></span>`;
-  const inner = `${prHtml}<div class="t-head">${head}<div class="t-side">${assignMenu}${statusMenu}</div></div>
+  // Свёрнутая задача: изображения — ровной полоской внизу, под описанием (раскрытая показывает их после полного описания).
+  const strip = !editing && t.images?.length ? `<div class="t-strip" role="group" aria-label="Изображения">${t.images.map((k, i) =>
+    `<button type="button" class="img-btn" data-view-img="${t.id}" data-i="${i}" tabindex="${open ? -1 : 0}" aria-label="Изображение ${i + 1} из ${t.images.length} — открыть">${thumbImg(k)}</button>`).join('')}</div>` : '';
+  const inner = `${prHtml}<div class="t-head">${head}<div class="t-side">${assignMenu}${statusMenu}</div></div>${strip}
     <div class="t-more" id="tm-${t.id}"><div class="t-more-in"><div class="t-pad">${more}</div></div></div>`;
   // t-fx — слой фона (лучи/переливание), --ro — свой поворот лучей у каждой задачи, чтобы карточки не были одинаковыми.
   return `<article class="task${t.status === 'done' ? ' done' : ''}${open ? ' open' : ''}${editing ? ' editing' : ''}${pr ? ` has-pr pr-${t.important ? 'hi' : 'lo'}` : ''}" data-task="${t.id}" data-s="${s.id}" style="--ro:${hue(t.id)}deg"><span class="t-fx" aria-hidden="true"></span>${
