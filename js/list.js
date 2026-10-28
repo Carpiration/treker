@@ -181,6 +181,9 @@ function setDescOpen(open) {
   $('#descPeek').classList.toggle('has-text', !!text);
 }
 $('#descPeek').addEventListener('click', () => { setDescOpen(true); $('#nDesc').focus(); });
+// Нажатие на «Добавить», выбор исполнителя и метку важности не забирает фокус у описания: иначе описание сворачивается
+// прямо под курсором, кнопка становится ниже, и клик проходит мимо — задача не добавлялась.
+['.c-side', '#nPrio'].forEach(s => $(s).addEventListener('mousedown', e => { if ($('#cBox').classList.contains('with-desc') && e.target.closest('button')) e.preventDefault(); }));
 $('#nDesc').addEventListener('focusout', e => { if (!e.relatedTarget || !$('#cDesc').contains(e.relatedTarget)) setDescOpen(false); });
 $('#newForm').addEventListener('submit', e => {
   e.preventDefault();
