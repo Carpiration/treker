@@ -205,6 +205,33 @@ function deleteViewerImage() {
   vw.i = Math.min(vw.i, vw.keys.length - 1); showViewerImage();
 }
 $('#vwDel').addEventListener('click', deleteViewerImage);
+// Копировать открытое изображение в буфер (PNG — его понимают все программы, куда вставляют).
+async function fullImageUrl(key) {
+  if (vw.local) return key;
+  const u = imgUrl(key, false); if (u) return u;
+  const [r] = await backend.signImages([imgPath(key, false)]);
+  if (!r?.signedUrl) throw new Error('нет доступа к изображению');
+  imgCache.set(r.path, { url: r.signedUrl, exp: Date.now() + 55 * 60e3 });
+  return r.signedUrl;
+}
+async function pngOf(url) {
+  const blob = await (await fetch(url)).blob();
+  const bmp = await loadBitmap(blob);
+  const c = Object.assign(document.createElement('canvas'), { width: bmp.width || bmp.naturalWidth, height: bmp.height || bmp.naturalHeight });
+  c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.();
+  return new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('не удалось подготовить')), 'image/png'));
+}
+$('#vwCopy').addEventListener('click', async () => {
+  const key = vw.keys[vw.i], btn = $('#vwCopy');
+  if (!navigator.clipboard?.write || !window.ClipboardItem) return toast('Здесь нельзя копировать изображения — сохраните его (долгое нажатие или правая кнопка мыши)');
+  btnBusy(btn, true, 'Копирую…');
+  try {
+    // Promise внутри ClipboardItem — так копирование срабатывает и в Safari (буфер открыт только во время нажатия).
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': fullImageUrl(key).then(pngOf) })]);
+    toast('Изображение скопировано');
+  } catch (e) { toast(`Не удалось скопировать изображение${e?.message ? `: ${e.message}` : ''}`); }
+  finally { btnBusy(btn, false); }
+});
 $('#viewer').addEventListener('keydown', e => { if (e.key === 'Delete' && !$('#vwDel').hidden) deleteViewerImage(); });
 function stepViewer(d) { if (vw.keys.length < 2) return; vw.i = (vw.i + d + vw.keys.length) % vw.keys.length; showViewerImage(); }
 $('#vwPrev').addEventListener('click', () => stepViewer(-1));

@@ -50,6 +50,7 @@ try { var L = JSON.parse(localStorage.getItem('treker-look') || 'null');
   <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11.5l-2 4 2 4H5"/></symbol>
   <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
   <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.2"/><path d="M15.5 8.5V6.2A2.2 2.2 0 0 0 13.3 4H6.2A2.2 2.2 0 0 0 4 6.2v7.1a2.2 2.2 0 0 0 2.2 2.2h2.3"/></symbol>
   <symbol id="s-todo" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
   <symbol id="s-doing" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 4.6a3.4 3.4 0 0 1 0 6.8z" fill="currentColor"/></symbol>
   <symbol id="s-done" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.4" fill="currentColor"/><path d="m5.3 8.2 1.8 1.8 3.6-3.8" fill="none" stroke="#0d0e10" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -143,6 +144,7 @@ try { var L = JSON.parse(localStorage.getItem('treker-look') || 'null');
   <img class="vw-img" id="vwImg" alt="">
   <div class="vw-bar">
  <span class="vw-n" id="vwN"></span>
+    <button class="btn ghost sm vw-copy" type="button" id="vwCopy"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg>Копировать</button>
     <button class="btn ghost sm danger vw-del" type="button" id="vwDel" hidden><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg>Удалить</button>
     <button class="icon-btn vw-close" type="button" data-close aria-label="Закрыть"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
   </div>

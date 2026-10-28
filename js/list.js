@@ -60,11 +60,12 @@ function taskHtml(t) {
       </div>`
     : `${t.desc ? `<p class="t-desc">${esc(t.desc)}</p>` : ''}${imgsHtml(t, false)}
       <div class="t-meta">${meta.charAt(0).toUpperCase() + meta.slice(1)}</div>${trNote}
-      ${rw ? `<div class="t-actions">
+      ${rw || t.desc ? `<div class="t-actions">${rw ? `
         <button class="btn ghost sm" type="button" data-edit="${t.id}">${icon('edit')}Изменить</button>
         ${tr ? `<button class="btn ghost sm" type="button" data-cancel-tr="${tr.id}">${icon('x')}Отменить передачу</button>`
           : `<button class="btn ghost sm" type="button" data-move="${t.id}">${icon('move')}Перенести</button>`}
-        <button class="btn ghost sm danger" type="button" data-del="${t.id}">${icon('trash')}Удалить</button>
+        <button class="btn ghost sm danger" type="button" data-del="${t.id}">${icon('trash')}Удалить</button>` : ''}
+        ${t.desc ? `<button class="icon-btn t-copy" type="button" data-copy="${t.id}" aria-label="Скопировать описание" title="Скопировать описание">${icon('copy')}</button>` : ''}
       </div>` : ''}`;
   // Метка важности слева (в папках с режимом «Важно / Потом»): нажатие переключает.
   const pr = taskPrio(t), prLbl = t.important ? 'Важно' : 'Потом';
@@ -320,8 +321,26 @@ function removeTask(id) {
   setTimeout(go, 200);
 }
 
+/* ---------- копирование: описание и изображения ---------- */
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  // Запасной путь (старые браузеры, Android-оболочка).
+  const ta = Object.assign(document.createElement('textarea'), { value: text });
+  ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  (document.querySelector('dialog[open]') || document.body).append(ta); ta.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch {}
+  ta.remove(); return ok;
+}
+async function copyDesc(id, btn) {
+  const t = state.db.tasks.find(x => x.id === id); if (!t?.desc) return;
+  if (await copyText(t.desc)) {
+    toast('Описание скопировано');
+    btn?.classList.add('copied'); setTimeout(() => btn?.classList.remove('copied'), 1200);
+  } else toast('Не удалось скопировать — выделите текст и скопируйте вручную');
+}
 $('#list').addEventListener('click', e => {
   if (e.target.closest('[data-menu]')) return;
+  const cp = e.target.closest('[data-copy]'); if (cp) return copyDesc(cp.dataset.copy, cp);
   const pr = e.target.closest('[data-pr]');
   if (pr) { const t = state.db.tasks.find(x => x.id === pr.dataset.pr); return t && setImportant(t.id, !t.important); }
   const ed = e.target.closest('[data-edit]'); if (ed) return startEdit(ed.dataset.edit);
