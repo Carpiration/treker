@@ -209,8 +209,19 @@ $('#newForm').addEventListener('submit', e => {
   $('#nTitle').focus();
 });
 $('#nTitle').addEventListener('input', () => { delete $('#cBox').dataset.invalid; $('#nTitle').removeAttribute('aria-invalid'); $('#nTitleErr').hidden = true; });
+// Клавиатура (ПК): Enter — новая строка (из названия — переход в описание), Shift+Enter (или Ctrl+Enter) — добавить задачу.
+// На телефоне Enter в названии по-прежнему добавляет: у экранной клавиатуры нет Shift+Enter.
+const addKey = e => e.key === 'Enter' && (e.shiftKey || e.ctrlKey || e.metaKey) && !e.isComposing;
+$('#nTitle').addEventListener('keydown', e => {
+  if (addKey(e)) { e.preventDefault(); $('#newForm').requestSubmit(); return; }
+  if (e.key === 'Enter' && !e.isComposing && finePointer()) {
+    e.preventDefault();
+    setDescOpen(true);
+    const d = $('#nDesc'); d.focus(); d.setSelectionRange(d.value.length, d.value.length);
+  }
+});
 $('#nDesc').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('#newForm').requestSubmit();
+  if (addKey(e)) { e.preventDefault(); $('#newForm').requestSubmit(); }
   if (e.key === 'Escape') { e.preventDefault(); $('#nTitle').focus(); }
 });
 
@@ -335,5 +346,5 @@ $('#list').addEventListener('keydown', e => {
   if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
   // Название — многострочное поле только для переноса: Enter сохраняет, а не добавляет строку.
   const titleEnter = e.key === 'Enter' && !e.shiftKey && e.target.classList.contains('t-title-input');
-  if (titleEnter || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) { e.preventDefault(); saveEdit(f.dataset.form); }
+  if (titleEnter || (e.key === 'Enter' && (e.ctrlKey || e.metaKey || e.shiftKey))) { e.preventDefault(); saveEdit(f.dataset.form); }
 });
