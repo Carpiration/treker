@@ -320,22 +320,30 @@ function groupHtml(g, admin) {
 /* ---------- папки ---------- */
 function buildFoldersPage() {
   const u = me(), folders = userFolders(state.me);
+  const rootRow = `<div class="f-row" data-f="root">
+      <span class="f-ic" aria-hidden="true">${icon('inbox')}</span>
+      <form class="f-name" data-f-rename="root" novalidate><label class="sr-only" for="f-root-name">Название для задач без папки</label>
+        <input class="input" id="f-root-name" value="${esc(rootName(u))}" maxlength="40" autocomplete="off" placeholder="Без папки"></form>
+      <button type="button" class="icon-btn prio-tg${u.rootPrio ? ' on' : ''}" data-f-prio="root" aria-pressed="${!!u.rootPrio}" aria-label="Режим «Важно / Потом»" title="Режим «Важно / Потом»: ${u.rootPrio ? 'включён' : 'выключен'}">${icon('flag')}</button>
+      <label class="eye-tg" title="${u.rootHidden ? 'Скрыты от других' : 'Видны другим'}"><input type="checkbox" class="sr-only" data-f-hide="root"${u.rootHidden ? '' : ' checked'}>
+        ${icon(u.rootHidden ? 'eye-off' : 'eye')}<span class="sr-only">Видны другим</span></label>
+      <span class="f-del-gap" aria-hidden="true"></span>
+    </div>`;
   const rows = folders.map(f => `<div class="f-row" data-f="${f.id}">
+      <span class="f-ic" aria-hidden="true">${icon('folder')}</span>
       <form class="f-name" data-f-rename="${f.id}" novalidate><label class="sr-only" for="f-${f.id}-name">Название папки</label>
         <input class="input" id="f-${f.id}-name" value="${esc(f.name)}" maxlength="40" autocomplete="off"${f.kind === 'transfers' ? ' readonly title="Служебная папка: сюда приходят переданные вам задачи"' : ''}></form>
       <button type="button" class="icon-btn prio-tg${f.prio ? ' on' : ''}" data-f-prio="${f.id}" aria-pressed="${!!f.prio}" aria-label="Режим «Важно / Потом»" title="Режим «Важно / Потом»: ${f.prio ? 'включён' : 'выключен'}">${icon('flag')}</button>
       <label class="eye-tg" title="${f.hidden ? 'Скрыта от других' : 'Видна другим'}"><input type="checkbox" class="sr-only" data-f-hide="${f.id}"${f.hidden ? '' : ' checked'}>
         ${icon(f.hidden ? 'eye-off' : 'eye')}<span class="sr-only">Видна другим</span></label>
       ${f.kind === 'transfers' ? '' : state.confirmDel === f.id
-        ? `<button type="button" class="btn sm danger-solid" data-f-del="${f.id}" title="Задачи перейдут в «Без папки»">${icon('trash')}Удалить?</button>`
+        ? `<button type="button" class="btn sm danger-solid" data-f-del="${f.id}" title="Задачи перейдут в «${esc(rootName(u))}»">${icon('trash')}Удалить?</button>`
         : `<button type="button" class="icon-btn danger-ic" data-f-del="${f.id}" aria-label="Удалить папку" title="Удалить папку">${icon('trash')}</button>`}
     </div>`).join('');
   $('#stBody').innerHTML = `<section class="st-sec" aria-label="Мои папки">
     <p class="hint">Папки — внутри «Мои задачи». Другие люди могут смотреть ваши задачи; скрытую папку не видит никто, даже администратор.</p>
-    <label class="switch-row"><span class="txt"><span>Задачи без папки видны другим</span>
-      <span class="hint">${u.rootHidden ? 'Сейчас скрыты от всех' : 'Сейчас видны всем участникам'}</span></span>
-      <input type="checkbox" class="switch" role="switch" id="rootVisible"${u.rootHidden ? '' : ' checked'}></label>
-    <div class="f-list">${rows || '<p class="empty-s">Папок пока нет.</p>'}</div>
+    <div class="f-list">${rootRow}${rows}</div>
+    <p class="hint">Первая строка — задачи без папки: её можно переименовать, скрыть, включить режим и передать целиком (в меню папки).</p>
     <form class="inline" id="folderNew" novalidate>
       ${fieldHtml('fNewName', 'Новая папка', 'maxlength="40" autocomplete="off" placeholder="Например, Дом"')}
       <button class="btn" type="submit">${icon('plus')}Создать</button></form>
@@ -476,6 +484,8 @@ $('#stBody').addEventListener('change', e => {
     const u = user(t.dataset.member), g = group(t.dataset.group);
     (t.checked ? ops.addMember(g.id, u.id) : ops.removeMember(g.id, u.id))
       .then(okk => okk && toast(t.checked ? `${u.name} теперь в группе «${g.name}»` : `${u.name} исключён(а) из «${g.name}»`));
+  } else if (t.dataset.fHide === 'root') {
+    ops.patchSelf({ rootHidden: !t.checked }).then(okk => okk && toast(t.checked ? `«${rootName()}» видны другим` : `«${rootName()}» скрыты от всех`));
   } else if (t.dataset.fHide) {
     const f = folder(t.dataset.fHide);
     ops.patchFolder(f.id, { hidden: !t.checked }).then(okk => okk && toast(t.checked ? `«${f.name}» видна другим` : `«${f.name}» скрыта от всех`));
@@ -526,6 +536,11 @@ $('#stBody').addEventListener('submit', async e => {
     const inp = $('#fNewName'), name = inp.value.trim();
     if (!setErr(inp, nameError(name, userFolders(state.me).some(x => x.name.toLowerCase() === name.toLowerCase())))) return inp.focus();
     if (await ops.addFolder({ id: newId(), ownerId: state.me, name, hidden: false, kind: 'user', createdAt: Date.now() })) { toast(`Папка «${name}» создана`); buildSettings(); $('#fNewName')?.focus(); }
+  } else if (f.dataset.fRename === 'root') {
+    const inp = $('#f-root-name'), name = inp.value.trim(), next = name && name !== 'Без папки' ? name : null;
+    if ((me().rootName || null) === next) return;
+    if (next && userFolders(state.me).some(x => x.name.toLowerCase() === next.toLowerCase())) { toast('Папка с таким названием уже есть'); inp.value = rootName(); return; }
+    if (await ops.patchSelf({ rootName: next })) { toast(next ? 'Название сохранено' : 'Вернули название «Без папки»'); if (!next) inp.value = 'Без папки'; }
   } else if (f.dataset.fRename) {
     const id = f.dataset.fRename, inp = $(`#f-${id}-name`), name = inp.value.trim(), fo = folder(id);
     if (!fo || name === fo.name) return;

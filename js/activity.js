@@ -256,7 +256,7 @@ function buildMovePage() {
     const people = activeUsers().filter(u => u.id !== state.me).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
     body = `<p class="t-quote">${quote(t.title)}</p>
       <h4 class="mv-h">Мои задачи</h4><div class="mv-list">
-        ${opt(` data-mv-owner="${state.me}"`, icon('user'), 'Без папки', '', here(null, state.me, null))}
+        ${opt(` data-mv-owner="${state.me}"`, icon('inbox'), quote(rootName()), '', here(null, state.me, null))}
         ${mine.map(f => opt(` data-mv-owner="${state.me}" data-mv-folder="${f.id}"`, icon(f.hidden ? 'eye-off' : 'folder'), quote(f.name), '', here(null, state.me, f.id))).join('')}</div>
       ${groups.length ? `<h4 class="mv-h">В группу</h4><div class="mv-list">${groups.map(g => opt(` data-mv-group="${g.id}"`, icon('grid'), esc(g.name), '', here(g.id, null, null))).join('')}</div>` : ''}
       ${people.length ? `<h4 class="mv-h">Передать человеку</h4><div class="mv-list">${people.map(u =>
@@ -279,27 +279,33 @@ async function doMove(btn, { group: g = null, owner: o = null, folder: f = null 
 
 /* ---------- передать папку целиком ---------- */
 function openGiveFolder(fid) { state.giveFolder = fid; openPage('give'); }
+// «Без папки» передаётся так же: у получателя появится папка с этим названием.
+const giveTarget = () => state.giveFolder === 'root' ? { id: null, name: rootName(), ownerId: state.me } : folder(state.giveFolder);
 function buildGivePage() {
-  const f = folder(state.giveFolder);
+  const f = giveTarget();
   if (!f || f.ownerId !== state.me) { $('#stBody').innerHTML = '<p class="empty-s">Папку уже нельзя передать.</p>'; return; }
-  const n = state.db.tasks.filter(t => t.folderId === f.id && !t.deletedAt).length;
+  const n = state.db.tasks.filter(t => !t.groupId && t.ownerId === state.me && (t.folderId || null) === f.id && !t.deletedAt).length;
   const people = activeUsers().filter(u => u.id !== state.me).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
   $('#stBody').innerHTML = `<section class="st-sec" aria-label="Передать папку">
     <p class="t-quote">«${esc(f.name)}» · задач: ${n}</p>
-    <p class="hint">Папка со всеми задачами перейдёт к человеку целиком и исчезнет у вас. Администратору — после его согласия.</p>
+    <p class="hint">${f.id ? 'Папка со всеми задачами перейдёт к человеку целиком и исчезнет у вас.' : 'Все задачи отсюда перейдут к человеку — у него появится папка с этим названием.'} Администратору — после его согласия.</p>
     ${people.length ? `<div class="mv-list">${people.map(u => `<button type="button" class="mv" data-give="${u.id}">${avatar(u)}
       <span class="mv-txt"><b>${esc(u.name)}</b><span>${u.role === 'admin' ? 'Администратор — нужно его согласие' : 'Сразу в его «Мои задачи»'}</span></span>${icon('down', 'mv-go')}</button>`).join('')}</div>`
       : '<p class="empty-s">Больше никого нет.</p>'}
   </section>`;
 }
 async function giveFolder(to) {
-  const f = folder(state.giveFolder), u = user(to);
+  const f = giveTarget(), u = user(to);
   $$('[data-give]').forEach(b => { b.disabled = true; });
   let res;
-  try { res = await backend.rpc('transfer_folder', { p_folder: f.id, p_to: to }); await backend.reload(); }
+  try {
+    res = f.id ? await backend.rpc('transfer_folder', { p_folder: f.id, p_to: to }) : await backend.rpc('transfer_root', { p_to: to });
+    await backend.reload();
+  }
   catch (e) { toast(errText(e)); buildGivePage(); return; }
   closeDlg($('#settings'));
-  if (state.folder === f.id && res === 'moved') state.folder = 'all';
+  if (state.folder === (f.id || 'root') && res === 'moved') state.folder = 'all';
+  if (!f.id && res === 'requested') state.folder = 'all';  // задачи собраны в папку, ждущую согласия
   render();
   toast(res === 'requested' ? `Запрос отправлен: ${u.name} должен согласиться` : `Папка «${f.name}» передана: ${u.name}`);
 }

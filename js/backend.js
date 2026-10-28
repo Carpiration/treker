@@ -14,7 +14,7 @@ function cloudBackend() {
     tasks: { id: 'id', title: 'title', desc: 'descr', status: 'status', assigneeId: 'assignee_id', authorId: 'author_id',
       groupId: 'group_id', ownerId: 'owner_id', folderId: 'folder_id', important: 'important', images: 'images', createdAt: 'created_at', updatedAt: 'updated_at', doneAt: 'done_at', deletedAt: 'deleted_at' },
     notifications: { readAt: 'read_at' },
-    profiles: { id: 'id', name: 'name', prefs: 'prefs', rootHidden: 'root_hidden', rootPrio: 'root_prio', avatar: 'avatar' },
+    profiles: { id: 'id', name: 'name', prefs: 'prefs', rootHidden: 'root_hidden', rootPrio: 'root_prio', rootName: 'root_name', avatar: 'avatar' },
     groups: { id: 'id', name: 'name', createdBy: 'created_by' },
     group_members: { groupId: 'group_id', userId: 'user_id' },
     folders: { id: 'id', ownerId: 'owner_id', name: 'name', hidden: 'hidden', kind: 'kind', prio: 'prio' },
@@ -31,7 +31,7 @@ function cloudBackend() {
   const toEvent = r => ({ id: r.id, taskId: r.task_id, title: r.title, actorId: r.actor_id, kind: r.kind, data: r.data || {},
     groupId: r.group_id, ownerId: r.owner_id, folderId: r.folder_id, createdAt: Date.parse(r.created_at) });
   const toUser = r => ({ id: r.id, name: r.name, login: r.login, role: r.role, active: r.active, pending: !!r.pending,
-    prefs: r.prefs || {}, rootHidden: !!r.root_hidden, rootPrio: !!r.root_prio, avatar: r.avatar || null });
+    prefs: r.prefs || {}, rootHidden: !!r.root_hidden, rootPrio: !!r.root_prio, rootName: r.root_name || null, avatar: r.avatar || null });
   const toGroup = r => ({ id: r.id, name: r.name, createdAt: Date.parse(r.created_at) });
   const toMember = r => ({ groupId: r.group_id, userId: r.user_id });
   const toFolder = r => ({ id: r.id, ownerId: r.owner_id, name: r.name, hidden: r.hidden, kind: r.kind, prio: !!r.prio, createdAt: Date.parse(r.created_at) });

@@ -14,6 +14,8 @@ const groupMembers = gid => activeUsers().filter(u => isMember(gid, u.id))
 const userFolders = uid => state.db.folders.filter(f => f.ownerId === uid)
   .sort((a, b) => (b.kind === 'transfers') - (a.kind === 'transfers') || a.name.localeCompare(b.name, 'ru'));
 const folder = id => state.db.folders.find(f => f.id === id);
+// «Без папки» можно переименовать (у каждого своё название).
+const rootName = (u = me()) => u?.rootName || 'Без папки';
 
 function spaceInfo(space = state.space) {
   if (space.startsWith('g:')) { const g = group(space.slice(2)); return g && { kind: 'group', id: g.id, group: g }; }
@@ -124,12 +126,12 @@ const pendingFolderTransfer = fid => state.db.ftransfers.find(x => x.folderId ==
 function filterOptions(info = cur()) {
   const all = spaceTasks(info), n = list => activeCount(list);
   if (info.kind === 'group') {
-    return [{ v: 'all', label: 'Все', icon: icon('users'), count: n(all) }]
+    return [{ v: 'all', label: 'Все задачи', icon: icon('users'), count: n(all) }]
       .concat(groupMembers(info.id).map(u => ({ v: u.id, label: u.id === state.me ? 'Мои' : u.name, icon: avatar(u), count: n(all.filter(t => t.assigneeId === u.id)) })));
   }
   const own = info.kind === 'me', owner = own ? me() : info.user;
-  const opts = [{ v: 'all', label: 'Все', icon: icon('list'), count: n(all) }];
-  if (own || !owner.rootHidden) opts.push({ v: 'root', label: 'Без папки', icon: icon('inbox'), count: n(all.filter(t => !t.folderId)), eye: own ? 'root' : null, hidden: own && owner.rootHidden, prio: prioShown() && owner.rootPrio });
+  const opts = [{ v: 'all', label: 'Все задачи', icon: icon('list'), count: n(all) }];
+  if (own || !owner.rootHidden) opts.push({ v: 'root', label: rootName(owner), icon: icon('inbox'), count: n(all.filter(t => !t.folderId)), eye: own ? 'root' : null, hidden: own && owner.rootHidden, prio: prioShown() && owner.rootPrio });
   for (const f of userFolders(info.id)) opts.push({ v: f.id, label: f.name, icon: icon('folder'), count: n(all.filter(t => t.folderId === f.id)),
     eye: own ? f.id : null, hidden: f.hidden, folder: own ? f.id : null, wait: own && pendingFolderTransfer(f.id), prio: prioShown() && f.prio });
   return opts;
@@ -151,7 +153,7 @@ function renderChips() {
     ? `<form class="fp-new" id="folderForm" novalidate><input class="input" id="folderName" maxlength="40" placeholder="Название папки" aria-label="Название новой папки" autocomplete="off"><button class="btn primary sm" type="submit">Создать</button></form>`
     : `<button type="button" class="fp-add" data-new-folder>${icon('plus')}Новая папка</button>`) : '';
   const hint = own ? `<p class="fp-hint">Удерживайте папку (или правая кнопка мыши) — переименовать, передать целиком, удалить</p>` : '';
-  const btnLabel = info.kind === 'group' ? (value === 'all' ? 'Все' : curOpt.label) : curOpt.label;
+  const btnLabel = curOpt.label;
   box.innerHTML = `<button type="button" class="fbtn" id="fpBtn" aria-haspopup="listbox" aria-expanded="${!!state.fpOpen}" aria-controls="fpPanel">
       <span class="fp-ic">${curOpt.icon}</span><span class="nm">${esc(btnLabel)}</span>${icon('down', 'chev')}</button>
     <div class="fpanel" id="fpPanel" role="listbox" aria-label="${info.kind === 'group' ? 'Чьи задачи' : 'Папка'}"${state.fpOpen ? '' : ' hidden'}>${rows}${add}${hint}</div>`;
@@ -186,7 +188,7 @@ $('#chips').addEventListener('click', e => {
   const eye = e.target.closest('[data-eye]');
   if (eye) {
     const v = eye.dataset.eye;
-    if (v === 'root') ops.patchSelf({ rootHidden: !me().rootHidden }).then(okk => okk && toast(me().rootHidden ? 'Задачи без папки скрыты от других' : 'Задачи без папки видны другим'));
+    if (v === 'root') ops.patchSelf({ rootHidden: !me().rootHidden }).then(okk => okk && toast(me().rootHidden ? `«${rootName()}» скрыты от других` : `«${rootName()}» видны другим`));
     else { const f = folder(v); ops.patchFolder(v, { hidden: !f.hidden }).then(okk => okk && toast(f.hidden ? `«${f.name}» скрыта от всех` : `«${f.name}» видна другим`)); }
     return;
   }

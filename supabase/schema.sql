@@ -1158,3 +1158,35 @@ begin
 end $$;
 revoke execute on function public.set_folder_prio(uuid, boolean) from public, anon;
 grant execute on function public.set_folder_prio(uuid, boolean) to authenticated;
+
+-- =====================================================================
+-- «Без папки» настраивается как обычная папка: своё название, скрытие, режим, передача целиком.
+alter table public.profiles add column if not exists root_name text;
+do $$ begin
+  alter table public.profiles add constraint profiles_root_name_len check (root_name is null or char_length(btrim(root_name)) between 1 and 40);
+exception when duplicate_object then null; end $$;
+grant update (root_name) on public.profiles to authenticated;
+
+create or replace function public.transfer_root(p_to uuid) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  me uuid := auth.uid(); p public.profiles; base text; nm text; i int := 1; fid uuid;
+begin
+  select * into p from public.profiles where id = me;
+  if not found or not public.is_active() then raise exception 'Нет доступа'; end if;
+  if p_to = me or not exists (select 1 from public.profiles where id = p_to and active) then raise exception 'Человек не найден или отключён'; end if;
+  if not exists (select 1 from public.tasks where owner_id = me and group_id is null and folder_id is null and deleted_at is null) then
+    raise exception 'Здесь нет задач — передавать нечего';
+  end if;
+  base := coalesce(nullif(btrim(p.root_name), ''), 'Без папки'); nm := base;
+  while exists (select 1 from public.folders where owner_id = me and lower(name) = lower(nm)) loop
+    i := i + 1; nm := left(base, 34) || ' (' || i || ')';
+  end loop;
+  insert into public.folders (owner_id, name, hidden, prio, kind) values (me, nm, p.root_hidden, p.root_prio, 'user') returning id into fid;
+  perform set_config('treker.bulk', 'on', true);
+  update public.tasks set folder_id = fid, updated_at = now() where owner_id = me and group_id is null and folder_id is null and deleted_at is null;
+  perform set_config('treker.bulk', 'off', true);
+  return public.transfer_folder(fid, p_to);
+end $$;
+revoke execute on function public.transfer_root(uuid) from public, anon;
+grant execute on function public.transfer_root(uuid) to authenticated;

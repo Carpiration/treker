@@ -190,13 +190,15 @@ function taskAction(id, act, v, b) {
   else if (act === 'del') removeTask(id);
   else if (act === 'open') { state.tapId = id; applyPeek(); }
 }
-// Меню папки: «Без папки» — только видимость; своя папка — переименовать, скрыть, передать целиком, удалить.
+// Меню папки: переименовать, скрыть, режим, передать целиком, удалить. «Без папки» — то же, кроме удаления.
 function openFolderCtx(fid, x, y, byKey = false) {
   const it = (act, html, cls = '') => `<button type="button" class="menu-item${cls}" role="menuitem" data-ctx="${act}">${html}</button>`;
   let html;
   if (fid === 'root') {
-    const hid = me().rootHidden;
-    html = labelHtml('Без папки') + it('hide', `${icon(hid ? 'eye' : 'eye-off')}${hid ? 'Показать другим' : 'Скрыть от других'}`) + prioItem(!!me().rootPrio);
+    const hid = me().rootHidden, n = state.db.tasks.filter(t => !t.groupId && t.ownerId === state.me && !t.folderId && !t.deletedAt).length;
+    html = labelHtml(rootName()) + it('rename', `${icon('edit')}Переименовать`)
+      + it('hide', `${icon(hid ? 'eye' : 'eye-off')}${hid ? 'Показать другим' : 'Скрыть от других'}`) + prioItem(!!me().rootPrio)
+      + (n ? it('give', `${icon('move')}Передать целиком…`) : '');
   } else {
     const f = folder(fid); if (!f) return;
     const ft = pendingFolderTransfer(fid);
@@ -212,7 +214,7 @@ function openFolderCtx(fid, x, y, byKey = false) {
 // Режим «Важно / Потом» у папки: переключатель с галочкой.
 const prioItem = on => `<button type="button" class="menu-item" role="menuitemcheckbox" aria-checked="${on}" data-ctx="prio">${icon('flag')}Режим «Важно / Потом»${on ? `<span class="ck">${icon('check')}</span>` : ''}</button>`;
 function toggleFolderPrio(fid) {
-  const f = fid === 'root' ? null : folder(fid), on = !(f ? f.prio : me().rootPrio), name = f ? `«${f.name}»` : '«Без папки»';
+  const f = fid === 'root' ? null : folder(fid), on = !(f ? f.prio : me().rootPrio), name = `«${f ? f.name : rootName()}»`;
   const done = okk => okk && toast(on ? (prioShown() ? `${name}: задачи делятся на «Важно» и «Потом»` : `${name}: режим включён, но у вас он скрыт во «Внешнем виде»`)
     : `${name}: режим «Важно / Потом» выключен`);
   ops.setFolderPrio(f ? fid : null, on).then(done);
@@ -223,14 +225,14 @@ function confirmFolderDel(fid) {
   const n = state.db.tasks.filter(t => t.folderId === fid && !t.deletedAt).length;
   const it = (act, html, cls = '') => `<button type="button" class="menu-item${cls}" role="menuitem" data-ctx="${act}">${html}</button>`;
   const html = labelHtml(`Удалить «${f.name}»?`)
-    + `<p class="menu-note">${n ? `Задачи (${n}) не удалятся — перейдут в «Без папки».` : 'Папка пустая.'}</p>`
+    + `<p class="menu-note">${n ? `Задачи (${n}) не удалятся — перейдут в «${esc(rootName())}».` : 'Папка пустая.'}</p>`
     + it('del-yes', `${icon('trash')}Удалить папку`, ' danger') + it('del-no', `${icon('x')}Отмена`);
   showCtx(html, ctxAt.x, ctxAt.y, true, act => folderAction(fid, act), 'Удаление папки');
 }
 function deleteFolder(id) {
   const name = folder(id)?.name;
   if (state.folder === id) state.folder = 'all';
-  return ops.removeFolder(id).then(okk => okk && toast(`Папка «${name}» удалена, задачи — в «Без папки»`));
+  return ops.removeFolder(id).then(okk => okk && toast(`Папка «${name}» удалена, задачи — в «${rootName()}»`));
 }
 function folderAction(fid, act, b) {
   if (act === 'del') return confirmFolderDel(fid);
@@ -238,7 +240,7 @@ function folderAction(fid, act, b) {
   if (act === 'del-yes') return deleteFolder(fid);
   if (act === 'prio') return toggleFolderPrio(fid);
   if (act === 'hide') {
-    if (fid === 'root') return ops.patchSelf({ rootHidden: !me().rootHidden }).then(okk => okk && toast(me().rootHidden ? 'Задачи без папки скрыты от других' : 'Задачи без папки видны другим'));
+    if (fid === 'root') return ops.patchSelf({ rootHidden: !me().rootHidden }).then(okk => okk && toast(me().rootHidden ? `«${rootName()}» скрыты от других` : `«${rootName()}» видны другим`));
     const f = folder(fid);
     return ops.patchFolder(fid, { hidden: !f.hidden }).then(okk => okk && toast(f.hidden ? `«${f.name}» скрыта от всех` : `«${f.name}» видна другим`));
   }

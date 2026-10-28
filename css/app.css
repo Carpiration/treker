@@ -376,6 +376,9 @@ dialog.closing::backdrop{animation:fade-out 160ms forwards}
 .m-row.full{opacity:.55}
 .empty-s{color:var(--faint);font-size:13.5px;padding:6px 10px}
 .f-row{display:flex;align-items:center;gap:6px}
+.f-ic{display:grid;place-items:center;width:22px;flex:none;color:var(--faint)} .f-ic .i{width:17px;height:17px}
+.f-row[data-f="root"] .f-ic{color:var(--accent)}
+.f-del-gap{width:38px;flex:none}
 .f-name{flex:1;min-width:0}
 .f-name .input{min-height:40px}
 .f-name .input[readonly]{color:var(--muted);border-style:dashed}
