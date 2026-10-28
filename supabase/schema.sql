@@ -1095,7 +1095,7 @@ begin
     perform public.log_event(new, 'edited', case when new.title is distinct from old.title
       then jsonb_build_object('old_title', old.title) else '{}'::jsonb end, actor);
   end if;
-  if new.important is distinct from old.important then
+  if new.important is distinct from old.important and coalesce(current_setting('treker.bulk', true), '') <> 'on' then
     perform public.log_event(new, 'edited', jsonb_build_object('important', new.important), actor);
   end if;
   if new.images is distinct from old.images then
@@ -1131,3 +1131,30 @@ drop policy if exists "task-images: удаление" on storage.objects;
 create policy "task-images: удаление" on storage.objects for delete to authenticated
   using (bucket_id = 'task-images' and ((storage.foldername(name))[1] = (select auth.uid())::text
     or not public.image_in_use(public.image_key(name))));
+
+-- =====================================================================
+-- По умолчанию задача — «Важно»; включение режима у папки делает все её задачи «Важно» (без строк в журнале на каждую).
+alter table public.tasks alter column important set default true;
+
+create or replace function public.set_folder_prio(p_folder uuid, p_on boolean) returns integer
+language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid(); n int := 0;
+begin
+  if not public.is_active() then raise exception 'Нет доступа'; end if;
+  if p_folder is null then
+    update public.profiles set root_prio = p_on where id = me;
+  else
+    update public.folders set prio = p_on where id = p_folder and owner_id = me;
+    if not found then raise exception 'Папка не найдена'; end if;
+  end if;
+  if p_on then
+    perform set_config('treker.bulk', 'on', true);
+    update public.tasks set important = true, updated_at = now()
+      where owner_id = me and group_id is null and folder_id is not distinct from p_folder and deleted_at is null and not important;
+    get diagnostics n = row_count;
+    perform set_config('treker.bulk', 'off', true);
+  end if;
+  return n;
+end $$;
+revoke execute on function public.set_folder_prio(uuid, boolean) from public, anon;
+grant execute on function public.set_folder_prio(uuid, boolean) to authenticated;

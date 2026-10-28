@@ -53,11 +53,11 @@ function forgetImages() {
 /* ---------- клеточки ---------- */
 // В задаче: просмотр (клик — целиком) или правка (× у каждой, «+» — добавить, перетаскивание на карточку).
 function imgsHtml(t, edit) {
-  const keys = t.images || [], pend = pendingImgs.get(t.id) || [];
+  const keys = t.images || [], pend = pendingImgs.get(t.id) || [], del = edit || taskEditable(t);
   if (!keys.length && !pend.length && !edit) return '';
   const cells = keys.map((k, i) => `<div class="img-cell">
       <button type="button" class="img-btn" data-view-img="${t.id}" data-i="${i}" aria-label="Изображение ${i + 1} из ${keys.length} — открыть">${thumbImg(k)}</button>
-      ${edit ? `<button type="button" class="img-x" data-img-del="${t.id}" data-key="${esc(k)}" aria-label="Убрать изображение ${i + 1}">${icon('x')}</button>` : ''}
+      ${del ? `<button type="button" class="img-x${edit ? '' : ' hov'}" data-img-del="${t.id}" data-key="${esc(k)}" aria-label="Убрать изображение ${i + 1}">${icon('x')}</button>` : ''}
     </div>`).join('') + pend.map(p => `<div class="img-cell busy"><img src="${p.local}" alt=""><span class="spin" aria-hidden="true"></span></div>`).join('');
   const free = MAX_IMAGES - keys.length - pend.length;
   const add = edit && free > 0 ? `<button type="button" class="img-add" data-img-add="${t.id}" aria-label="Добавить изображения (можно ещё ${free})" title="Добавить изображения">${icon('plus')}</button>` : '';
@@ -146,15 +146,30 @@ async function uploadOne(it, target) {
     renderComposerImages();
   }
 }
+// Удаление фото: сразу из задачи, файл — после того, как пропадёт «Отменить».
+const purgeT = new Map();
 function removeTaskImage(id, key) {
-  const t = state.db.tasks.find(x => x.id === id); if (!t || !taskEditable(t)) return;
-  ops.patchTask(id, { images: t.images.filter(k => k !== key) }).then(okk => okk && backend.removeImages([key]));
+  const t = state.db.tasks.find(x => x.id === id); if (!t || !taskEditable(t)) return false;
+  const at = t.images.indexOf(key); if (at < 0) return false;
+  ops.patchTask(id, { images: t.images.filter(k => k !== key) }).then(okk => {
+    if (!okk) return;
+    purgeT.set(key, setTimeout(() => { purgeT.delete(key); backend.removeImages([key]); }, UNDO_MS + 1500));
+  });
+  toast('Фото удалено', () => {
+    clearTimeout(purgeT.get(key)); purgeT.delete(key);
+    const x = state.db.tasks.find(y => y.id === id);
+    if (x && taskEditable(x) && !x.images.includes(key) && x.images.length < MAX_IMAGES) {
+      const imgs = x.images.slice(); imgs.splice(Math.min(at, imgs.length), 0, key);
+      ops.patchTask(id, { images: imgs });
+    }
+  });
+  return true;
 }
 
 /* ---------- просмотр целиком ---------- */
-let vw = { keys: [], i: 0, local: false };
-function openViewer(keys, i, local = false) {
-  vw = { keys, i, local };
+let vw = { keys: [], i: 0, local: false, taskId: null };
+function openViewer(keys, i, local = false, taskId = null) {
+  vw = { keys, i, local, taskId };
   showViewerImage();
   const d = $('#viewer');
   if (!d.open) d.showModal();
@@ -163,6 +178,8 @@ async function showViewerImage() {
   const { keys, i, local } = vw, img = $('#vwImg'), key = keys[i];
   $('#vwN').textContent = keys.length > 1 ? `${i + 1} / ${keys.length}` : '';
   $('#vwPrev').hidden = $('#vwNext').hidden = keys.length < 2;
+  const t = vw.taskId && state.db.tasks.find(x => x.id === vw.taskId);
+  $('#vwDel').hidden = !(local || (t && taskEditable(t)));
   if (local) { img.src = key; return; }
   // Сначала миниатюра (уже есть), затем полное изображение.
   const full = imgUrl(key, false);
@@ -173,6 +190,22 @@ async function showViewerImage() {
     if (r?.signedUrl) { imgCache.set(r.path, { url: r.signedUrl, exp: Date.now() + 55 * 60e3 }); if (vw.keys[vw.i] === key) img.src = r.signedUrl; }
   } catch {}
 }
+// Удалить открытое фото: из задачи (с «Отменить») или из поля новой задачи.
+function deleteViewerImage() {
+  const key = vw.keys[vw.i];
+  if (vw.local) {
+    const at = state.newImages.findIndex(x => x.local === key); if (at < 0) return;
+    const [x] = state.newImages.splice(at, 1); if (x.done) backend.removeImages([x.key]);
+    renderComposerImages(); vw.keys = state.newImages.map(y => y.local);
+  } else {
+    if (!removeTaskImage(vw.taskId, key)) return;
+    vw.keys = vw.keys.filter(k => k !== key);
+  }
+  if (!vw.keys.length) return $('#viewer').close();
+  vw.i = Math.min(vw.i, vw.keys.length - 1); showViewerImage();
+}
+$('#vwDel').addEventListener('click', deleteViewerImage);
+$('#viewer').addEventListener('keydown', e => { if (e.key === 'Delete' && !$('#vwDel').hidden) deleteViewerImage(); });
 function stepViewer(d) { if (vw.keys.length < 2) return; vw.i = (vw.i + d + vw.keys.length) % vw.keys.length; showViewerImage(); }
 $('#vwPrev').addEventListener('click', () => stepViewer(-1));
 $('#vwNext').addEventListener('click', () => stepViewer(1));
@@ -207,7 +240,7 @@ $('#nImgs').addEventListener('click', e => {
 });
 $('#list').addEventListener('click', e => {
   const v = e.target.closest('[data-view-img]');
-  if (v) { const t = state.db.tasks.find(x => x.id === v.dataset.viewImg); if (t) openViewer(t.images, Number(v.dataset.i)); return; }
+  if (v) { const t = state.db.tasks.find(x => x.id === v.dataset.viewImg); if (t) openViewer(t.images, Number(v.dataset.i), false, t.id); return; }
   const add = e.target.closest('[data-img-add]'); if (add) return pickImages(add.dataset.imgAdd);
   const del = e.target.closest('[data-img-del]'); if (del) return removeTaskImage(del.dataset.imgDel, del.dataset.key);
 });

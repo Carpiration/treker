@@ -142,7 +142,8 @@ try { var L = JSON.parse(localStorage.getItem('treker-look') || 'null');
 <dialog class="viewer" id="viewer" aria-label="Изображение" autofocus>
   <img class="vw-img" id="vwImg" alt="">
   <div class="vw-bar">
-    <span class="vw-n" id="vwN"></span>
+ <span class="vw-n" id="vwN"></span>
+    <button class="btn ghost sm danger vw-del" type="button" id="vwDel" hidden><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg>Удалить</button>
     <button class="icon-btn vw-close" type="button" data-close aria-label="Закрыть"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
   </div>
   <button class="icon-btn vw-nav vw-prev" type="button" id="vwPrev" aria-label="Предыдущее"><svg class="i" aria-hidden="true"><use href="#i-left"/></svg></button>

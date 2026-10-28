@@ -631,11 +631,11 @@ input[type=range]:disabled{cursor:default}
 
 /* ---------- важность: метка слева ---------- */
 :root{--pr-hi:var(--accent);--pr-lo:#8794b2}
-.t-pr{position:absolute;left:0;top:0;bottom:0;z-index:1;display:flex;align-items:flex-start;justify-content:center;width:22px;padding:0;border:0;
+.t-pr{position:absolute;left:0;top:0;bottom:0;z-index:1;display:flex;align-items:center;justify-content:center;width:22px;padding:0;border:0;
   border-right:1px solid color-mix(in srgb,var(--pr) 26%,transparent);border-radius:13px 0 0 13px;background:color-mix(in srgb,var(--pr) 11%,transparent);color:var(--pr);
   transition:background-color var(--t) var(--ease),color var(--t),border-color var(--t)}
 .pr-hi>.t-pr,.t-pr.pr-hi{--pr:var(--pr-hi)} .pr-lo>.t-pr,.t-pr.pr-lo{--pr:var(--pr-lo)}
-.t-pr>span{display:flex;align-items:center;height:46px;writing-mode:vertical-rl;transform:rotate(180deg);font-size:9px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;line-height:1;white-space:nowrap}
+.t-pr>span{display:block;writing-mode:vertical-rl;transform:rotate(180deg);font-size:9px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;line-height:1;white-space:nowrap}
 button.t-pr{cursor:pointer} button.t-pr:hover{background:color-mix(in srgb,var(--pr) 20%,transparent)}
 button.t-pr:focus-visible{outline:none;box-shadow:inset 0 0 0 2px var(--pr)}
 .task.has-pr .t-head,.task.has-pr .t-pad,.task.has-pr>form{margin-left:22px}
@@ -643,7 +643,7 @@ button.t-pr:focus-visible{outline:none;box-shadow:inset 0 0 0 2px var(--pr)}
 .task.has-pr .t-pr{border-radius:calc(var(--r) - 1px) 0 0 calc(var(--r) - 1px)}
 body.fx-rays .task.has-pr .t-pr,body.fx-outline .task.has-pr .t-pr{border-radius:13px 0 0 13px}
 .c-pr{position:static;flex:none;border-radius:calc(var(--r) - 1px) 0 0 calc(var(--r) - 1px)}
-.c-pr>span{height:44px}
+
 .pr-ic{display:inline-block;width:10px;height:10px;margin:0 3px;border-radius:3px}
 .pr-ic.hi{background:var(--pr-hi)} .pr-ic.lo{background:var(--pr-lo)}
 .seg.three .seg-b{padding:0 10px}
@@ -679,6 +679,10 @@ body.fx-rays .task.has-pr .t-pr,body.fx-outline .task.has-pr .t-pr{border-radius
 .t-pad .imgs{gap:8px;padding:2px 0}
 .t-pad .img-cell,.t-pad .img-add{width:56px;height:56px}
 @media (pointer:coarse){.img-x{width:26px;height:26px;top:-8px;right:-8px}}
+/* в раскрытой задаче крестик — при наведении (ПК); на телефоне удаление — в просмотре фото */
+.img-x.hov{opacity:0;transform:scale(.8);transition:opacity var(--t-fast),transform var(--t-fast) var(--ease)}
+.img-cell:hover .img-x.hov,.img-x.hov:focus-visible{opacity:1;transform:none}
+@media (hover:none){.img-x.hov{display:none}}
 /* перетаскивание файла на поле или задачу (ПК) */
 .drop-hint{position:absolute;inset:0;z-index:3;display:none;place-items:center;border-radius:inherit;background:color-mix(in srgb,var(--surface) 82%,transparent);color:var(--accent);font-size:13px;font-weight:650;pointer-events:none}
 .c-box.drop-over{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
@@ -690,6 +694,8 @@ dialog.viewer[open]{display:grid;place-items:center;animation:fade var(--t)}
 dialog.viewer::backdrop{background:transparent}
 .vw-img{max-width:calc(100vw - 24px);max-height:calc(100dvh - 96px);border-radius:10px;object-fit:contain;box-shadow:0 12px 40px rgba(0,0,0,.6);touch-action:pan-y}
 .vw-bar{position:absolute;top:max(8px,env(safe-area-inset-top));left:0;right:0;display:flex;align-items:center;padding:0 10px 0 18px;color:var(--muted);font-size:13px}
+.vw-del{margin-left:auto}
+.vw-del:not([hidden])+.vw-close{margin-left:6px}
 .vw-close{margin-left:auto;color:var(--text)}
 .vw-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.08);color:var(--text)}
 .vw-nav:hover{background:rgba(255,255,255,.16)}

@@ -215,7 +215,7 @@ function toggleFolderPrio(fid) {
   const f = fid === 'root' ? null : folder(fid), on = !(f ? f.prio : me().rootPrio), name = f ? `«${f.name}»` : '«Без папки»';
   const done = okk => okk && toast(on ? (prioShown() ? `${name}: задачи делятся на «Важно» и «Потом»` : `${name}: режим включён, но у вас он скрыт во «Внешнем виде»`)
     : `${name}: режим «Важно / Потом» выключен`);
-  (f ? ops.patchFolder(fid, { prio: on }) : ops.patchSelf({ rootPrio: on })).then(done);
+  ops.setFolderPrio(f ? fid : null, on).then(done);
 }
 // Подтверждение удаления — прямо в том же меню, на том же месте.
 function confirmFolderDel(fid) {

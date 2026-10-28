@@ -226,6 +226,11 @@ const ops = {
     () => backend.remove('group_members', { group_id: groupId, user_id: userId })),
   addFolder: f => commit(db => db.folders.push(f), () => backend.insert('folders', f)),
   patchFolder: (id, f) => commit(db => Object.assign(db.folders.find(x => x.id === id), f), () => backend.update('folders', { id }, f)),
+  // Режим «Важно / Потом»: при включении все задачи папки — «Важно» (на сервере — одной функцией).
+  setFolderPrio: (fid, on) => commit(db => {
+    if (fid) db.folders.find(f => f.id === fid).prio = on; else db.users.find(u => u.id === state.me).rootPrio = on;
+    if (on) for (const t of db.tasks) if (!t.groupId && t.ownerId === state.me && (t.folderId || null) === fid && !t.deletedAt) t.important = true;
+  }, () => backend.rpc('set_folder_prio', { p_folder: fid, p_on: on })),
   removeFolder: id => commit(db => { db.folders = db.folders.filter(f => f.id !== id); for (const t of db.tasks) if (t.folderId === id) t.folderId = null; },
     () => backend.remove('folders', { id })),
 };

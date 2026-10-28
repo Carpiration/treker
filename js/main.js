@@ -14,8 +14,12 @@ function toast(text, undo) {
   };
   const timer = setTimeout(hide, undo ? UNDO_MS : 2400);
   if (undo) $('button', el).onclick = () => { if (done) return; hide(); undo(); };
-  $('#toasts').append(el);
+  // Открыто модальное окно (настройки, просмотр фото) — показываем уведомление поверх него, а не под ним.
+  const box = $('#toasts'), host = $$('dialog[open]').pop() || document.body;
+  if (box.parentElement !== host) host.append(box);
+  box.append(el);
 }
+document.addEventListener('close', e => { const box = $('#toasts'); if (e.target.contains(box)) document.body.append(box); }, true);
 
 /* ---------- синхронизация, сеть, служебное ---------- */
 setInterval(remoteChanged, 60000);

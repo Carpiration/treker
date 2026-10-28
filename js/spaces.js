@@ -268,8 +268,8 @@ function newTaskPlace() {
   const f = state.folder !== 'all' && state.folder !== 'root' ? state.folder : null;
   return { groupId: null, ownerId: state.me, folderId: f, assigneeId: state.me, important: newImportant() };
 }
-// Важность новой задачи: выбранная на метке поля, иначе — по открытой вкладке («Важные» → важная).
+// Важность новой задачи: выбранная на метке поля, иначе — по открытой вкладке («Потом» → потом); по умолчанию — «Важно».
 function newImportant() {
-  if (!viewPrio()) return false;
-  return state.newImportant ?? effView() === 'important';
+  if (!viewPrio()) return true;
+  return state.newImportant ?? effView() !== 'later';
 }
