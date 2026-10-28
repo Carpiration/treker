@@ -16,6 +16,11 @@
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
+<script>
+// Сохранённый акцент и фон — сразу, до загрузки профиля (иначе заставка мелькает цветом по умолчанию).
+try { var L = JSON.parse(localStorage.getItem('treker-look') || 'null');
+  if (L && L.v) { for (var k in L.v) document.documentElement.style.setProperty(k, L.v[k]); if (L.off) document.body.classList.add('bg-off'); } } catch (e) {}
+</script>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
@@ -41,13 +46,25 @@
   <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.2 0 2-.8 2-1.8 0-.5-.2-.9-.5-1.3-.3-.3-.5-.8-.5-1.2 0-1 .8-1.7 1.8-1.7H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7" r="1"/></symbol>
   <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></symbol>
   <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6z"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17.5 4.8-4.8a1.5 1.5 0 0 1 2.1 0L16 17.8M14 15.5l1.6-1.6a1.5 1.5 0 0 1 2.1 0l2.8 2.8"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11.5l-2 4 2 4H5"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
   <symbol id="s-todo" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
   <symbol id="s-doing" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 4.6a3.4 3.4 0 0 1 0 6.8z" fill="currentColor"/></symbol>
   <symbol id="s-done" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.4" fill="currentColor"/><path d="m5.3 8.2 1.8 1.8 3.6-3.8" fill="none" stroke="#0d0e10" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 </svg>
 
 <!-- Загрузка и ошибка подключения -->
-<div class="boot" id="boot" role="status"><span id="bootText">Загрузка…</span>
+<div class="boot" id="boot" role="status">
+  <svg class="boot-mark" viewBox="96 128 320 256" aria-hidden="true">
+    <circle class="bm-glow" cx="162" cy="186" r="96"/>
+    <path class="bm-ck" pathLength="1" d="M118 186 L150 216 L206 152"/>
+    <path class="bm-ln bm-l1" pathLength="1" d="M252 186 H394"/>
+    <circle class="bm-dot bm-d2" cx="160" cy="276" r="21"/><path class="bm-ln bm-l2" pathLength="1" d="M252 276 H372"/>
+    <circle class="bm-dot bm-d3" cx="160" cy="356" r="21"/><path class="bm-ln bm-l3" pathLength="1" d="M252 356 H334"/>
+  </svg>
+  <span id="bootText">Загрузка…</span>
   <button class="btn" type="button" id="bootRetry" hidden>Повторить</button></div>
 
 <!-- Вход и первый запуск -->
@@ -76,16 +93,25 @@
     </div>
     <form class="composer" id="newForm" novalidate>
       <div class="c-box" id="cBox">
+        <button type="button" class="t-pr c-pr" id="nPrio" hidden></button>
+        <div class="c-main">
         <label class="sr-only" for="nTitle">Новая задача</label>
         <input class="c-title" id="nTitle" placeholder="Новая задача" maxlength="200" autocomplete="off" aria-describedby="nTitleErr">
         <!-- Описание: тонкая полоска с подсказкой (или началом текста); по клику раскрывается поле фиксированной высоты. -->
         <div class="c-desc" id="cDesc">
-          <button type="button" class="c-peek" id="descPeek" aria-controls="nDesc" aria-expanded="false"><svg class="i" aria-hidden="true"><use href="#i-text"/></svg><span class="c-peek-tx" id="descPeekTx">Описание — необязательно</span></button>
+          <div class="c-peek-row">
+            <button type="button" class="c-peek" id="descPeek" aria-controls="nDesc" aria-expanded="false"><svg class="i" aria-hidden="true"><use href="#i-text"/></svg><span class="c-peek-tx" id="descPeekTx">Описание — необязательно</span></button>
+            <button type="button" class="c-attach" id="nAttach" aria-label="Прикрепить изображения (до 5)" title="Изображения — до 5"><svg class="i" aria-hidden="true"><use href="#i-image"/></svg><span class="c-attach-n" id="nAttachN"></span></button>
+          </div>
           <div class="c-desc-wrap"><div>
             <label class="sr-only" for="nDesc">Описание</label>
             <textarea class="c-desc-in" id="nDesc" placeholder="Что именно, где, как проверить" maxlength="5000" tabindex="-1"></textarea>
           </div></div>
         </div>
+        <div class="imgs c-imgs" id="nImgs" hidden></div>
+        </div>
+        <div class="drop-hint" aria-hidden="true">Отпустите — изображения прикрепятся к задаче</div>
+        <input type="file" id="imgFile" accept="image/*" multiple class="sr-only" tabindex="-1" aria-hidden="true">
       </div>
       <div class="c-side">
         <div id="nAssignSlot" hidden></div>
@@ -95,8 +121,8 @@
     <div class="field-error" id="nTitleErr" hidden></div>
     <div class="filters">
       <div class="seg" id="viewSeg" role="radiogroup" aria-label="Какие задачи показать">
-        <button type="button" class="seg-b on" role="radio" aria-checked="true" data-view="active">Активные</button>
-        <button type="button" class="seg-b" role="radio" aria-checked="false" data-view="done">Готовые</button>
+        <button type="button" class="seg-b on" role="radio" aria-checked="true" data-view="active" tabindex="0">Активные</button>
+        <button type="button" class="seg-b" role="radio" aria-checked="false" data-view="done" tabindex="-1">Готовые</button>
       </div>
       <div class="chips" id="chips" role="toolbar" aria-label="Фильтр задач" hidden></div>
     </div>
@@ -113,6 +139,16 @@
   <div class="dlg-body" id="stBody"></div>
 </dialog>
 
+<dialog class="viewer" id="viewer" aria-label="Изображение" autofocus>
+  <img class="vw-img" id="vwImg" alt="">
+  <div class="vw-bar">
+    <span class="vw-n" id="vwN"></span>
+    <button class="icon-btn vw-close" type="button" data-close aria-label="Закрыть"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </div>
+  <button class="icon-btn vw-nav vw-prev" type="button" id="vwPrev" aria-label="Предыдущее"><svg class="i" aria-hidden="true"><use href="#i-left"/></svg></button>
+  <button class="icon-btn vw-nav vw-next" type="button" id="vwNext" aria-label="Следующее"><svg class="i" aria-hidden="true"><use href="#i-right"/></svg></button>
+</dialog>
+
 <div class="menu-list ctx" id="ctx" role="menu" aria-label="Действия с задачей" hidden></div>
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
@@ -122,6 +158,7 @@
 <script src="js/auth.js" defer></script>
 <script src="js/menu.js" defer></script>
 <script src="js/list.js" defer></script>
+<script src="js/images.js" defer></script>
 <script src="js/look.js" defer></script>
 <script src="js/settings.js" defer></script>
 <script src="js/activity.js" defer></script>

@@ -1029,3 +1029,105 @@ begin
   select * into t from public.tasks where id = tr.task_id;
   perform public.log_event(t, 'transfer_cancelled', jsonb_build_object('to', tr.to_id), tr.from_id);
 end $$;
+
+-- =====================================================================
+-- Режим «Важно / Потом» (включается у папки или у «Без папки», переезжает вместе с папкой) и изображения в задачах (до 5).
+alter table public.tasks add column if not exists important boolean not null default false;
+alter table public.tasks add column if not exists images text[] not null default '{}';
+alter table public.folders add column if not exists prio boolean not null default false;
+alter table public.profiles add column if not exists root_prio boolean not null default false;
+
+create or replace function public.images_ok(a text[]) returns boolean
+language sql immutable set search_path = public as $$
+  select cardinality(a) <= 5 and not exists (select 1 from unnest(a) x where x !~ '^[0-9a-f-]{36}/[0-9a-f-]{36}$')
+$$;
+do $$ begin
+  alter table public.tasks add constraint tasks_images_ok check (public.images_ok(images));
+exception when duplicate_object then null; end $$;
+create index if not exists tasks_images_gin on public.tasks using gin (images);
+
+grant insert (important, images), update (important, images) on public.tasks to authenticated;
+grant insert (prio), update (prio) on public.folders to authenticated;
+grant update (root_prio) on public.profiles to authenticated;
+
+-- Журнал: смена важности и изображений — как «Правка».
+create or replace function public.task_log() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  actor uuid := coalesce(auth.uid(), new.deleted_by, new.author_id);
+begin
+  if tg_op = 'INSERT' then
+    perform public.log_event(new, 'created', jsonb_build_object('assignee', new.assignee_id), actor);
+    perform public.notify(new.assignee_id, 'assigned', new.id, new.title, actor);
+    return new;
+  end if;
+  if new.deleted_at is distinct from old.deleted_at then
+    if new.deleted_at is not null then
+      perform public.log_event(new, 'deleted', '{}'::jsonb, actor);
+      perform public.notify(new.assignee_id, 'deleted', new.id, new.title, actor);
+    else
+      perform public.log_event(new, 'restored', '{}'::jsonb, actor);
+      perform public.notify(new.assignee_id, 'restored', new.id, new.title, actor);
+    end if;
+    return new;
+  end if;
+  if new.group_id is distinct from old.group_id or new.owner_id is distinct from old.owner_id or new.folder_id is distinct from old.folder_id then
+    perform public.log_event(new, 'moved', jsonb_build_object(
+      'from_group', old.group_id, 'to_group', new.group_id, 'from_owner', old.owner_id, 'to_owner', new.owner_id,
+      'from_folder', old.folder_id, 'to_folder', new.folder_id), actor);
+    if new.assignee_id is not distinct from old.assignee_id then
+      perform public.notify(new.assignee_id, 'moved', new.id, new.title, actor, jsonb_build_object('to_group', new.group_id, 'to_folder', new.folder_id));
+    end if;
+  end if;
+  if new.assignee_id is distinct from old.assignee_id then
+    if new.owner_id is not distinct from old.owner_id then
+      perform public.log_event(new, 'assigned', jsonb_build_object('from', old.assignee_id, 'to', new.assignee_id), actor);
+    end if;
+    perform public.notify(new.assignee_id,
+      case when new.owner_id is distinct from old.owner_id then 'moved' else 'assigned' end,
+      new.id, new.title, actor, jsonb_build_object('to_group', new.group_id, 'to_folder', new.folder_id));
+  end if;
+  if new.status is distinct from old.status then
+    perform public.log_event(new, 'status', jsonb_build_object('from', old.status, 'to', new.status), actor);
+    perform public.notify(new.assignee_id, 'status', new.id, new.title, actor, jsonb_build_object('from', old.status, 'to', new.status));
+  end if;
+  if new.title is distinct from old.title or new.descr is distinct from old.descr then
+    perform public.log_event(new, 'edited', case when new.title is distinct from old.title
+      then jsonb_build_object('old_title', old.title) else '{}'::jsonb end, actor);
+  end if;
+  if new.important is distinct from old.important then
+    perform public.log_event(new, 'edited', jsonb_build_object('important', new.important), actor);
+  end if;
+  if new.images is distinct from old.images then
+    perform public.log_event(new, 'edited', jsonb_build_object('images', cardinality(new.images)), actor);
+  end if;
+  return new;
+end $$;
+
+-- Изображения: закрытое хранилище. Файлы: <uid загрузившего>/<uuid>.webp и миниатюра <uuid>_t.webp.
+-- Видят — загрузивший и все, кому видна задача с этим изображением; ссылки приложение подписывает на час.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('task-images', 'task-images', false, 3145728, array['image/webp', 'image/jpeg', 'image/png'])
+on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+
+create or replace function public.image_key(p_name text) returns text
+language sql immutable set search_path = public as $$ select regexp_replace(p_name, '(_t)?\.webp$', '') $$;
+-- Используется ли изображение хоть в одной задаче (включая архив и скрытые папки).
+create or replace function public.image_in_use(p_key text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.tasks where images @> array[p_key])
+$$;
+revoke execute on function public.image_in_use(text) from public, anon;
+grant execute on function public.image_in_use(text) to authenticated;
+
+drop policy if exists "task-images: загрузка в свою папку" on storage.objects;
+create policy "task-images: загрузка в свою папку" on storage.objects for insert to authenticated
+  with check (bucket_id = 'task-images' and (storage.foldername(name))[1] = (select auth.uid())::text and public.is_active());
+drop policy if exists "task-images: просмотр" on storage.objects;
+create policy "task-images: просмотр" on storage.objects for select to authenticated
+  using (bucket_id = 'task-images' and ((storage.foldername(name))[1] = (select auth.uid())::text
+    or exists (select 1 from public.tasks t where t.images @> array[public.image_key(name)])));
+drop policy if exists "task-images: удаление" on storage.objects;
+create policy "task-images: удаление" on storage.objects for delete to authenticated
+  using (bucket_id = 'task-images' and ((storage.foldername(name))[1] = (select auth.uid())::text
+    or not public.image_in_use(public.image_key(name))));

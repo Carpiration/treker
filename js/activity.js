@@ -161,7 +161,10 @@ function eventText(e) {
       : d.to === 'done' ? `${a} завершил(а) ${quote(e.title)}` : `${a}: ${quote(e.title)} — ${esc(statusOf(d.from).label)} → ${esc(statusOf(d.to).label)}`;
     case 'assigned': return !d.to ? `${a} снял(а) исполнителя с ${quote(e.title)}` : d.to === e.actorId ? `${a} взял(а) себе ${quote(e.title)}`
       : `${a} назначил(а) ${quote(e.title)} на ${name(d.to)}`;
-    case 'edited': return d.old_title ? `${a} переименовал(а) ${quote(d.old_title)} → ${quote(e.title)}` : `${a} изменил(а) описание ${quote(e.title)}`;
+    case 'edited':
+      if (d.important !== undefined) return `${a} отметил(а) ${quote(e.title)}: ${d.important ? '«Важно»' : '«Потом»'}`;
+      if (d.images !== undefined) return `${a} изменил(а) изображения ${quote(e.title)} (теперь ${d.images})`;
+      return d.old_title ? `${a} переименовал(а) ${quote(d.old_title)} → ${quote(e.title)}` : `${a} изменил(а) описание ${quote(e.title)}`;
     case 'moved': {
       const f = d.to_folder && folder(d.to_folder);
       const to = d.to_group ? placeText(d.to_group) : d.to_owner === e.actorId ? `свои задачи${f ? ` → ${quote(f.name)}` : ''}`

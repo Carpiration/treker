@@ -22,6 +22,11 @@ function applyAccentBg(p = pref) {
   root.setProperty('--bg-s', `${clamp(p('bgStrength'), 0, 80)}%`);
   root.setProperty('--bg-rn', clamp(p('bgSpread'), 20, 160));  // распространение: размер свечения (в CSS — от ширины и высоты экрана)
   document.body.classList.toggle('bg-off', !p('bgOn'));
+  // Запоминаем на устройстве: при следующем запуске заставка сразу в своих цветах (см. index.html).
+  try {
+    const v = {}; for (const k of ['--accent', '--on-accent', '--bg-x', '--bg-y', '--bg-s', '--bg-rn']) v[k] = root.getPropertyValue(k);
+    localStorage.setItem('treker-look', JSON.stringify({ v, off: !p('bgOn') }));
+  } catch {}
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#0d0e10');
 }
 // Перетаскивание и ползунки меняют вид сразу (черновик), а в профиль сохраняется по окончании — без лишних запросов.

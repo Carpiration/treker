@@ -140,6 +140,9 @@ function ctxItems(t) {
   if (!rw) return it('open', `${icon('text')}Подробнее`) + (t.groupId || t.ownerId === state.me ? '' : `<div class="menu-label">Только просмотр</div>`);
   let h = it('edit', `${icon('edit')}Изменить`) + labelHtml('Статус')
     + STATUSES.map(s => it('status', `<span class="st-ic" data-s="${s.id}">${statusIcon(s.id)}</span>${s.label}`, s.id, '', t.status === s.id)).join('');
+  if (taskPrio(t)) h += labelHtml('Важность')
+    + it('prio', '<span class="pr-ic hi" aria-hidden="true"></span>Важно', 'hi', '', !!t.important)
+    + it('prio', '<span class="pr-ic lo" aria-hidden="true"></span>Потом', 'lo', '', !t.important);
   if (t.groupId) {
     const members = groupMembers(t.groupId);
     h += labelHtml('Исполнитель') + members.map(u => it('assign', `${avatar(u)}<span class="nm">${u.id === state.me ? 'Себе' : esc(u.name)}</span>`, u.id, '', t.assigneeId === u.id)).join('')
@@ -180,6 +183,7 @@ function openCtx(id, x, y, byKey = false) {
 function taskAction(id, act, v, b) {
   if (act === 'edit') startEdit(id);
   else if (act === 'status') setStatus(id, v);
+  else if (act === 'prio') setImportant(id, v === 'hi');
   else if (act === 'assign') transfer(id, v);
   else if (act === 'move') openMove(id);
   else if (act === 'cancel-tr') cancelTransfer(pendingTransfer(id)?.id, b);
@@ -192,17 +196,26 @@ function openFolderCtx(fid, x, y, byKey = false) {
   let html;
   if (fid === 'root') {
     const hid = me().rootHidden;
-    html = labelHtml('Без папки') + it('hide', `${icon(hid ? 'eye' : 'eye-off')}${hid ? 'Показать другим' : 'Скрыть от других'}`);
+    html = labelHtml('Без папки') + it('hide', `${icon(hid ? 'eye' : 'eye-off')}${hid ? 'Показать другим' : 'Скрыть от других'}`) + prioItem(!!me().rootPrio);
   } else {
     const f = folder(fid); if (!f) return;
     const ft = pendingFolderTransfer(fid);
     html = labelHtml(f.name)
       + (f.kind === 'transfers' ? '' : it('rename', `${icon('edit')}Переименовать`))
       + it('hide', `${icon(f.hidden ? 'eye' : 'eye-off')}${f.hidden ? 'Показать другим' : 'Скрыть от других'}`)
+      + prioItem(!!f.prio)
       + (ft ? it('cancel-ft', `${icon('x')}Отменить передачу (${esc(user(ft.toId)?.name || '—')})`) : it('give', `${icon('move')}Передать папку целиком…`))
       + (f.kind === 'transfers' ? '' : '<div class="menu-sep" role="separator"></div>' + it('del', `${icon('trash')}Удалить папку…`, ' danger'));
   }
   showCtx(html, x, y, byKey, (act, v, b) => folderAction(fid, act, b), 'Действия с папкой');
+}
+// Режим «Важно / Потом» у папки: переключатель с галочкой.
+const prioItem = on => `<button type="button" class="menu-item" role="menuitemcheckbox" aria-checked="${on}" data-ctx="prio">${icon('flag')}Режим «Важно / Потом»${on ? `<span class="ck">${icon('check')}</span>` : ''}</button>`;
+function toggleFolderPrio(fid) {
+  const f = fid === 'root' ? null : folder(fid), on = !(f ? f.prio : me().rootPrio), name = f ? `«${f.name}»` : '«Без папки»';
+  const done = okk => okk && toast(on ? (prioShown() ? `${name}: задачи делятся на «Важно» и «Потом»` : `${name}: режим включён, но у вас он скрыт во «Внешнем виде»`)
+    : `${name}: режим «Важно / Потом» выключен`);
+  (f ? ops.patchFolder(fid, { prio: on }) : ops.patchSelf({ rootPrio: on })).then(done);
 }
 // Подтверждение удаления — прямо в том же меню, на том же месте.
 function confirmFolderDel(fid) {
@@ -223,6 +236,7 @@ function folderAction(fid, act, b) {
   if (act === 'del') return confirmFolderDel(fid);
   if (act === 'del-no') return;
   if (act === 'del-yes') return deleteFolder(fid);
+  if (act === 'prio') return toggleFolderPrio(fid);
   if (act === 'hide') {
     if (fid === 'root') return ops.patchSelf({ rootHidden: !me().rootHidden }).then(okk => okk && toast(me().rootHidden ? 'Задачи без папки скрыты от других' : 'Задачи без папки видны другим'));
     const f = folder(fid);

@@ -14,6 +14,7 @@ function render(opts) {
   renderTop();
   renderChips();
   renderComposerAssign();
+  renderComposerPrio();
   renderList(opts);
   if ($('#settings').open) refreshSettings();
 }
@@ -37,6 +38,7 @@ function taskHtml(t) {
   const head = editing
     ? `<textarea class="t-title-input" id="et-${t.id}" rows="1" maxlength="200" autocomplete="off" aria-label="Название задачи" aria-describedby="et-${t.id}-err">${esc(t.title)}</textarea>`
     : `<button type="button" class="t-main" data-main="${t.id}" aria-expanded="${open}" aria-controls="tm-${t.id}"><span class="t-title">${esc(t.title)}</span>${
+      t.images?.length ? `<span class="t-att" title="Изображений: ${t.images.length}">${icon('image')}${t.images.length}</span>` : ''}${
       t.desc ? `<span class="t-sub">${esc(t.desc.replace(/\s+/g, ' ').slice(0, 240))}</span>` : ''}${
       view === 'hide' ? `<span class="sr-only">, ${s.label}</span>` : ''}</button>`;
   const meta = [
@@ -51,12 +53,13 @@ function taskHtml(t) {
       <div class="field-error" id="et-${t.id}-err" hidden></div>
       <label class="sr-only" for="ed-${t.id}">Описание</label>
       <textarea class="t-desc-input" id="ed-${t.id}" maxlength="5000" placeholder="Описание: что именно, где, как проверить">${esc(t.desc)}</textarea>
+      ${imgsHtml(t, true)}
       <div class="t-actions">
         <button class="btn primary sm" type="submit">Сохранить</button>
         <button class="btn ghost sm" type="button" data-cancel>Отмена</button>
         <button class="btn ghost sm danger push" type="button" data-del="${t.id}">${icon('trash')}Удалить</button>
       </div>`
-    : `${t.desc ? `<p class="t-desc">${esc(t.desc)}</p>` : ''}
+    : `${t.desc ? `<p class="t-desc">${esc(t.desc)}</p>` : ''}${imgsHtml(t, false)}
       <div class="t-meta">${meta.charAt(0).toUpperCase() + meta.slice(1)}</div>${trNote}
       ${rw ? `<div class="t-actions">
         <button class="btn ghost sm" type="button" data-edit="${t.id}">${icon('edit')}Изменить</button>
@@ -64,10 +67,15 @@ function taskHtml(t) {
           : `<button class="btn ghost sm" type="button" data-move="${t.id}">${icon('move')}Перенести</button>`}
         <button class="btn ghost sm danger" type="button" data-del="${t.id}">${icon('trash')}Удалить</button>
       </div>` : ''}`;
-  const inner = `<div class="t-head">${head}<div class="t-side">${assignMenu}${statusMenu}</div></div>
+  // Метка важности слева (в папках с режимом «Важно / Потом»): нажатие переключает.
+  const pr = taskPrio(t), prLbl = t.important ? 'Важно' : 'Потом';
+  const prHtml = !pr ? '' : rw
+    ? `<button type="button" class="t-pr" data-pr="${t.id}" aria-label="${prLbl}. Сделать «${t.important ? 'Потом' : 'Важно'}»" title="${prLbl} — нажмите, чтобы сделать «${t.important ? 'Потом' : 'Важно'}»"><span>${prLbl}</span></button>`
+    : `<span class="t-pr ro" title="${prLbl}"><span>${prLbl}</span></span>`;
+  const inner = `${prHtml}<div class="t-head">${head}<div class="t-side">${assignMenu}${statusMenu}</div></div>
     <div class="t-more" id="tm-${t.id}"><div class="t-more-in"><div class="t-pad">${more}</div></div></div>`;
   // t-fx — слой фона (лучи/переливание), --ro — свой поворот лучей у каждой задачи, чтобы карточки не были одинаковыми.
-  return `<article class="task${t.status === 'done' ? ' done' : ''}${open ? ' open' : ''}${editing ? ' editing' : ''}" data-task="${t.id}" data-s="${s.id}" style="--ro:${hue(t.id)}deg"><span class="t-fx" aria-hidden="true"></span>${
+  return `<article class="task${t.status === 'done' ? ' done' : ''}${open ? ' open' : ''}${editing ? ' editing' : ''}${pr ? ` has-pr pr-${t.important ? 'hi' : 'lo'}` : ''}" data-task="${t.id}" data-s="${s.id}" style="--ro:${hue(t.id)}deg"><span class="t-fx" aria-hidden="true"></span>${
     editing ? `<form data-form="${t.id}" novalidate>${inner}</form>` : inner}</article>`;
 }
 
@@ -133,6 +141,7 @@ function renderList({ flip = true } = {}) {
     state.flash = null;
   }
   for (const [id, to] of state.leaving) if (!list.querySelector(`[data-task="${id}"].leaving`)) flyAway(id, to);
+  hydrateImages(list);
 }
 
 // Завершение (или возврат из «Готовых»): вспышка цветом статуса, затем задача улетает к переключателю.
@@ -180,13 +189,16 @@ $('#newForm').addEventListener('submit', e => {
     $('#nTitle').focus(); return;
   }
   if (!canWrite()) return;
-  const now = Date.now(), place = newTaskPlace();
-  const task = { id: newId(), title, desc: $('#nDesc').value.trim(), status: 'todo', ...place, authorId: state.me, createdAt: now, updatedAt: now, doneAt: null };
+  const now = Date.now(), place = newTaskPlace(), id = newId();
+  const task = { id, title, desc: $('#nDesc').value.trim(), status: 'todo', ...place, images: composerImages(id),
+    authorId: state.me, createdAt: now, updatedAt: now, doneAt: null };
   // Поле очищаем сразу: повторный Enter создаст новую задачу, а не дубль этой.
   $('#nTitle').value = ''; $('#nDesc').value = ''; setDescOpen(false);
-  state.newAssignee = undefined;
-  state.view = 'active';  // новая задача — активная: показываем, куда она попала
+  state.newAssignee = undefined; state.newImportant = null;
+  // Показываем вкладку, куда попала новая задача.
+  state.view = viewPrio() ? (task.important ? 'important' : 'later') : 'active';
   ops.addTasks([task]);
+  renderComposerImages();
   const to = user(place.assigneeId);
   if (to && to.id !== state.me) toast(`Задача для ${to.name}`, () => ops.undoCreate(task.id));
   $('#nTitle').focus();
@@ -205,11 +217,34 @@ function setStatus(id, s) {
   state.flash = { id, from };
   // Задача уходит из текущего списка (в «Готовые» или обратно) — сначала анимация, потом исчезает.
   const leaves = (s === 'done') !== (from === 'done');
-  if (leaves) { state.leaving.set(id, s === 'done' ? 'done' : 'active'); closeCtx(); state.tapId = null; state.editing = null; }
+  const to = s === 'done' ? 'done' : tabOf({ ...t, status: s });
+  if (leaves) { state.leaving.set(id, to); closeCtx(); state.tapId = null; state.editing = null; }
   ops.patchTask(id, { status: s, doneAt: s === 'done' ? Date.now() : null });
-  if (leaves) toast(s === 'done' ? 'Готово — задача в «Готовых»' : 'Задача снова в «Активных»',
+  if (leaves) toast(s === 'done' ? 'Готово — задача в «Готовых»' : `Задача снова в «${VIEWS[to]}»`,
     () => setStatus(id, from));
 }
+// Важно ↔ Потом. В папке с режимом задача уходит на другую вкладку — с той же анимацией, что и «Готово».
+function setImportant(id, v) {
+  const t = state.db.tasks.find(x => x.id === id);
+  if (!t || !!t.important === v || !taskEditable(t)) return;
+  const prio = viewPrio(), leaves = prio && t.status !== 'done' && effView(prio) !== 'active';
+  const to = v ? 'important' : 'later';
+  if (leaves) { state.leaving.set(id, to); closeCtx(); state.tapId = null; if (state.editing === id) saveEdit(id, true); }
+  ops.patchTask(id, { important: v });
+  toast(leaves ? `Задача в «${VIEWS[to]}»` : v ? 'Отмечено: важно' : 'Отмечено: потом', () => setImportant(id, !v));
+}
+/* метка важности у поля новой задачи (видна в папке с режимом) */
+function renderComposerPrio() {
+  const b = $('#nPrio'), on = viewPrio() && canWrite();
+  b.hidden = !on; $('#cBox').classList.toggle('has-pr', on);
+  if (!on) return;
+  const hi = newImportant();
+  b.className = `t-pr c-pr pr-${hi ? 'hi' : 'lo'}`;
+  b.innerHTML = `<span>${hi ? 'Важно' : 'Потом'}</span>`;
+  b.setAttribute('aria-label', `Новая задача: ${hi ? 'важно' : 'потом'}. Переключить`);
+  b.title = `Новая задача — «${hi ? 'Важно' : 'Потом'}». Нажмите, чтобы переключить`;
+}
+$('#nPrio').addEventListener('click', () => { state.newImportant = !newImportant(); renderComposerPrio(); });
 function transfer(taskId, toId) {
   if (toId === 'none') toId = null;
   const t = state.db.tasks.find(x => x.id === taskId);
@@ -271,6 +306,8 @@ function removeTask(id) {
 
 $('#list').addEventListener('click', e => {
   if (e.target.closest('[data-menu]')) return;
+  const pr = e.target.closest('[data-pr]');
+  if (pr) { const t = state.db.tasks.find(x => x.id === pr.dataset.pr); return t && setImportant(t.id, !t.important); }
   const ed = e.target.closest('[data-edit]'); if (ed) return startEdit(ed.dataset.edit);
   const del = e.target.closest('[data-del]'); if (del) return removeTask(del.dataset.del);
   const mv = e.target.closest('[data-move]'); if (mv) return openMove(mv.dataset.move);

@@ -45,11 +45,31 @@ function filterTasks(list, info = cur()) {
   if (state.folder === 'all') return list;
   return list.filter(t => (t.folderId || 'root') === state.folder);
 }
-// Переключатель «Активные / Готовые» (state.view). Активные — по дате создания (смена статуса строку не двигает),
+/* ---------- режим «Важно / Потом» ----------
+   Включается у папки (или у «Без папки») её владельцем и переезжает вместе с папкой при передаче.
+   Каждый может скрыть его только у себя (prefs.prioOff). В группах режима нет — там нет папок. */
+const prioShown = () => !pref('prioOff');
+const folderPrio = (fid, ownerId) => fid ? !!folder(fid)?.prio : !!user(ownerId)?.rootPrio;
+const taskPrio = t => prioShown() && !t.groupId && folderPrio(t.folderId, t.ownerId);
+// Открыта папка с режимом — переключатель «Важные · Потом · Готовые» вместо «Активные · Готовые».
+function viewPrio(info = cur()) {
+  if (!prioShown() || info.kind === 'group' || state.folder === 'all') return false;
+  return state.folder === 'root' ? !!user(info.id)?.rootPrio : !!folder(state.folder)?.prio;
+}
+function effView(prio = viewPrio()) {
+  if (prio) return state.view === 'active' ? 'important' : state.view;
+  return state.view === 'important' || state.view === 'later' ? 'active' : state.view;
+}
+const VIEWS = { active: 'Активные', important: 'Важные', later: 'Потом', done: 'Готовые' };
+const viewList = (prio = viewPrio()) => prio ? ['important', 'later', 'done'] : ['active', 'done'];
+// Какая вкладка у активной задачи (куда она «улетает» при смене статуса или важности).
+const tabOf = (t, prio = viewPrio()) => t.status === 'done' ? 'done' : !prio ? 'active' : t.important ? 'important' : 'later';
+
+// Переключатель (state.view). Активные — по дате создания (смена статуса строку не двигает),
 // готовые — по времени завершения, свежие сверху.
 function visibleTasks() {
-  const done = state.view === 'done';
-  return filterTasks(spaceTasks()).filter(t => (t.status === 'done') === done || state.leaving.has(t.id))
+  const prio = viewPrio(), v = effView(prio), done = v === 'done';
+  return filterTasks(spaceTasks()).filter(t => tabOf(t, prio) === v || state.leaving.has(t.id))
     .sort((a, b) => done ? (b.doneAt || 0) - (a.doneAt || 0) : b.createdAt - a.createdAt);
 }
 const activeCount = list => list.filter(t => t.status !== 'done').length;
@@ -83,7 +103,7 @@ function renderTop() {
       itemHtml(`u:${u.id}`, `${avatar(u)}<span class="nm">${esc(u.name)}</span>`, info.kind === 'user' && info.id === u.id))).join('');
   $('#whoSlot').innerHTML = menuHtml({ kind: 'space', cls: 'who-btn', align: 'left', items,
     btn: `<span class="nm">${esc(label)}</span>${icon('down', 'chev')}`, label: `${label}. Выбрать группу или чьи задачи показать` });
-  $$('#viewSeg .seg-b').forEach(b => { const on = b.dataset.view === state.view; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
+  renderViewSeg();
   $('#listTitle').textContent = label;
   renderBell();
   const waiting = isAdmin() && state.db.users.some(u => u.pending && !u.active);
@@ -109,9 +129,9 @@ function filterOptions(info = cur()) {
   }
   const own = info.kind === 'me', owner = own ? me() : info.user;
   const opts = [{ v: 'all', label: 'Все', icon: icon('list'), count: n(all) }];
-  if (own || !owner.rootHidden) opts.push({ v: 'root', label: 'Без папки', icon: icon('inbox'), count: n(all.filter(t => !t.folderId)), eye: own ? 'root' : null, hidden: own && owner.rootHidden });
+  if (own || !owner.rootHidden) opts.push({ v: 'root', label: 'Без папки', icon: icon('inbox'), count: n(all.filter(t => !t.folderId)), eye: own ? 'root' : null, hidden: own && owner.rootHidden, prio: prioShown() && owner.rootPrio });
   for (const f of userFolders(info.id)) opts.push({ v: f.id, label: f.name, icon: icon('folder'), count: n(all.filter(t => t.folderId === f.id)),
-    eye: own ? f.id : null, hidden: f.hidden, folder: own ? f.id : null, wait: own && pendingFolderTransfer(f.id) });
+    eye: own ? f.id : null, hidden: f.hidden, folder: own ? f.id : null, wait: own && pendingFolderTransfer(f.id), prio: prioShown() && f.prio });
   return opts;
 }
 function renderChips() {
@@ -123,7 +143,7 @@ function renderChips() {
   if (!own && info.kind !== 'group' && opts.length < 2) { box.innerHTML = ''; box.hidden = true; state.fpOpen = false; return; }
   const rows = opts.map(o => `<div class="fp-row${o.v === value ? ' on' : ''}${o.hidden ? ' hid' : ''}"${o.folder ? ` data-folder="${o.folder}"` : o.eye === 'root' ? ' data-folder="root"' : ''}>
       <button type="button" class="fp-item" role="option" aria-selected="${o.v === value}" data-pick="${o.v}">
-        <span class="fp-ic">${o.icon}</span><span class="nm">${esc(o.label)}</span>${o.wait ? `<span class="fp-wait" title="Ждёт согласия на передачу">${icon('clock')}</span>` : ''}
+        <span class="fp-ic">${o.icon}</span><span class="nm">${esc(o.label)}</span>${o.prio ? `<span class="fp-flag" title="Режим «Важно / Потом»">${icon('flag')}</span>` : ''}${o.wait ? `<span class="fp-wait" title="Ждёт согласия на передачу">${icon('clock')}</span>` : ''}
         ${o.count ? `<span class="m-cnt" title="Активных задач">${o.count}</span>` : ''}</button>
       ${o.eye ? `<button type="button" class="fp-eye" data-eye="${o.eye}" aria-pressed="${!o.hidden}" aria-label="${o.hidden ? 'Скрыта от других — показать' : 'Видна другим — скрыть'}" title="${o.hidden ? 'Скрыта от других' : 'Видна другим'}">${icon(o.hidden ? 'eye-off' : 'eye')}</button>` : ''}
     </div>`).join('');
@@ -170,7 +190,7 @@ $('#chips').addEventListener('click', e => {
   const it = e.target.closest('[data-pick]'); if (!it) return;
   const v = it.dataset.pick, info = cur();
   if (info.kind === 'group') { state.who = v; state.newAssignee = undefined; } else state.folder = v;
-  state.editing = null; state.tapId = null; state.fpOpen = false; state.newFolder = false;
+  state.editing = null; state.tapId = null; state.fpOpen = false; state.newFolder = false; state.newImportant = null;
   render();
   $('#fpBtn')?.focus({ preventScroll: true });
 });
@@ -198,14 +218,26 @@ function createFolder(name) {
 }
 $('#chips').addEventListener('submit', e => { if (e.target.id !== 'folderForm') return; e.preventDefault(); createFolder($('#folderName').value); });
 
-$('#viewSeg').addEventListener('click', e => {
-  const b = e.target.closest('[data-view]'); if (!b || b.dataset.view === state.view) return;
-  state.view = b.dataset.view; state.editing = null; state.tapId = null;
+function renderViewSeg() {
+  const prio = viewPrio(), v = effView(prio), seg = $('#viewSeg'), list = viewList(prio);
+  const html = list.map(x => `<button type="button" class="seg-b${x === v ? ' on' : ''}${x === 'important' ? ' seg-hi' : x === 'later' ? ' seg-lo' : ''}" role="radio" aria-checked="${x === v}" tabindex="${x === v ? 0 : -1}" data-view="${x}">${VIEWS[x]}</button>`).join('');
+  if (seg.dataset.html === html) return;
+  const focused = seg.contains(document.activeElement);
+  seg.dataset.html = html; seg.innerHTML = html; seg.classList.toggle('three', list.length === 3);
+  if (focused) $('.seg-b.on', seg)?.focus();
+}
+function setView(v) {
+  if (v === effView()) return;
+  state.view = v; state.editing = null; state.tapId = null; state.newImportant = null;
   render();
-});
+}
+$('#viewSeg').addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) setView(b.dataset.view); });
 $('#viewSeg').addEventListener('keydown', e => {
   if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
-  e.preventDefault(); state.view = state.view === 'done' ? 'active' : 'done'; render(); $('#viewSeg .seg-b.on').focus();
+  e.preventDefault();
+  const list = viewList(), i = list.indexOf(effView());
+  setView(list[(i + (e.key === 'ArrowRight' ? 1 : -1) + list.length) % list.length]);
+  $('#viewSeg .seg-b.on').focus();
 });
 /* ---------- новая задача: куда и кому ---------- */
 // Исполнители для задачи группы — её участники; в личном пространстве исполнитель всегда владелец.
@@ -234,5 +266,10 @@ function newTaskPlace() {
   const info = cur();
   if (info.kind === 'group') return { groupId: info.id, ownerId: null, folderId: null, assigneeId: state.newAssignee ?? null };
   const f = state.folder !== 'all' && state.folder !== 'root' ? state.folder : null;
-  return { groupId: null, ownerId: state.me, folderId: f, assigneeId: state.me };
+  return { groupId: null, ownerId: state.me, folderId: f, assigneeId: state.me, important: newImportant() };
+}
+// Важность новой задачи: выбранная на метке поля, иначе — по открытой вкладке («Важные» → важная).
+function newImportant() {
+  if (!viewPrio()) return false;
+  return state.newImportant ?? effView() === 'important';
 }

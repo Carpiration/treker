@@ -12,17 +12,17 @@ function cloudBackend() {
   // Поля приложения ↔ колонки базы. Даты в приложении — миллисекунды.
   const COLS = {
     tasks: { id: 'id', title: 'title', desc: 'descr', status: 'status', assigneeId: 'assignee_id', authorId: 'author_id',
-      groupId: 'group_id', ownerId: 'owner_id', folderId: 'folder_id', createdAt: 'created_at', updatedAt: 'updated_at', doneAt: 'done_at', deletedAt: 'deleted_at' },
+      groupId: 'group_id', ownerId: 'owner_id', folderId: 'folder_id', important: 'important', images: 'images', createdAt: 'created_at', updatedAt: 'updated_at', doneAt: 'done_at', deletedAt: 'deleted_at' },
     notifications: { readAt: 'read_at' },
-    profiles: { id: 'id', name: 'name', prefs: 'prefs', rootHidden: 'root_hidden', avatar: 'avatar' },
+    profiles: { id: 'id', name: 'name', prefs: 'prefs', rootHidden: 'root_hidden', rootPrio: 'root_prio', avatar: 'avatar' },
     groups: { id: 'id', name: 'name', createdBy: 'created_by' },
     group_members: { groupId: 'group_id', userId: 'user_id' },
-    folders: { id: 'id', ownerId: 'owner_id', name: 'name', hidden: 'hidden', kind: 'kind' },
+    folders: { id: 'id', ownerId: 'owner_id', name: 'name', hidden: 'hidden', kind: 'kind', prio: 'prio' },
   };
   const toRow = (table, o) => Object.fromEntries(Object.entries(o).filter(([k]) => k in COLS[table])
     .map(([k, v]) => [COLS[table][k], k.endsWith('At') ? iso(v) : v]));
   const toTask = r => ({ id: r.id, title: r.title, desc: r.descr, status: r.status, assigneeId: r.assignee_id, authorId: r.author_id,
-    groupId: r.group_id, ownerId: r.owner_id, folderId: r.folder_id,
+    groupId: r.group_id, ownerId: r.owner_id, folderId: r.folder_id, important: !!r.important, images: r.images || [],
     createdAt: Date.parse(r.created_at), updatedAt: Date.parse(r.updated_at), doneAt: r.done_at ? Date.parse(r.done_at) : null,
     deletedAt: r.deleted_at ? Date.parse(r.deleted_at) : null, deletedBy: r.deleted_by });
   const toNote = r => ({ id: r.id, kind: r.kind, taskId: r.task_id, title: r.title, actorId: r.actor_id, data: r.data || {},
@@ -31,10 +31,10 @@ function cloudBackend() {
   const toEvent = r => ({ id: r.id, taskId: r.task_id, title: r.title, actorId: r.actor_id, kind: r.kind, data: r.data || {},
     groupId: r.group_id, ownerId: r.owner_id, folderId: r.folder_id, createdAt: Date.parse(r.created_at) });
   const toUser = r => ({ id: r.id, name: r.name, login: r.login, role: r.role, active: r.active, pending: !!r.pending,
-    prefs: r.prefs || {}, rootHidden: !!r.root_hidden, avatar: r.avatar || null });
+    prefs: r.prefs || {}, rootHidden: !!r.root_hidden, rootPrio: !!r.root_prio, avatar: r.avatar || null });
   const toGroup = r => ({ id: r.id, name: r.name, createdAt: Date.parse(r.created_at) });
   const toMember = r => ({ groupId: r.group_id, userId: r.user_id });
-  const toFolder = r => ({ id: r.id, ownerId: r.owner_id, name: r.name, hidden: r.hidden, kind: r.kind, createdAt: Date.parse(r.created_at) });
+  const toFolder = r => ({ id: r.id, ownerId: r.owner_id, name: r.name, hidden: r.hidden, kind: r.kind, prio: !!r.prio, createdAt: Date.parse(r.created_at) });
   // Строка таблицы по ключу: { id } или составной ключ участника группы.
   const match = (q, key) => { for (const [k, v] of Object.entries(key)) q = q.eq(k, v); return q; };
   let uid = null, chan = null;
@@ -97,6 +97,16 @@ function cloudBackend() {
       const { error } = await sb.storage.from('avatars').upload(path, blob, { contentType: blob.type, cacheControl: '31536000', upsert: false });
       if (error) throw error;
       return path;
+    },
+    // Изображения задач: закрытое хранилище; ключ — «<uid>/<uuid>», файлы — ключ.webp и ключ_t.webp (миниатюра).
+    async uploadImage(key, full, thumb) {
+      const up = (path, blob) => sb.storage.from('task-images').upload(path, blob, { contentType: blob.type, cacheControl: '31536000' });
+      ok(await up(`${key}.webp`, full)); ok(await up(`${key}_t.webp`, thumb));
+    },
+    async signImages(paths) { return ok(await sb.storage.from('task-images').createSignedUrls(paths, 3600)) || []; },
+    async removeImages(keys) {
+      if (!keys.length) return;
+      await sb.storage.from('task-images').remove(keys.flatMap(k => [`${k}.webp`, `${k}_t.webp`])).catch(() => {});
     },
     async removeAvatar(path) { await sb.storage.from('avatars').remove([path]).catch(() => {}); },
     async removePush(endpoint) { ok(await sb.from('push_subscriptions').delete().eq('endpoint', endpoint)); },
@@ -197,7 +207,10 @@ const ops = {
   restoreTask: id => commit(db => Object.assign(db.tasks.find(x => x.id === id) || {}, { deletedAt: null, deletedBy: null }),
     async () => { await backend.rpc('restore_task', { p_task: id }); await backend.reload(); }),
   // Навсегда — только из архива. Отмена создания задачи (тост «Отменить») — тоже сюда не подходит: см. undoCreate.
-  purgeTask: id => commit(db => { db.tasks = db.tasks.filter(x => x.id !== id); }, () => backend.deleteTask(id)),
+  purgeTask: id => {
+    const imgs = state.db.tasks.find(x => x.id === id)?.images || [];
+    return commit(db => { db.tasks = db.tasks.filter(x => x.id !== id); }, async () => { await backend.deleteTask(id); backend.removeImages(imgs); });
+  },
   // Отменить только что созданную задачу: в архив, чтобы не мусорить, и сразу навсегда.
   async undoCreate(id) { if (await ops.archiveTask(id)) return ops.purgeTask(id); },
   markRead: () => commit(db => { for (const n of db.notes) n.readAt ||= Date.now(); }, () => backend.markRead()),

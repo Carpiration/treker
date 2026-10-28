@@ -88,6 +88,7 @@ async function logout(msg) {
   const d = $('#settings'); if (d.open) { d.classList.remove('closing'); d.close(); }
   state.me = null; state.editing = null;
   $$('#toasts .toast').forEach(t => t.remove());
+  forgetImages();
   await pushForget();
   await backend.logout();
   showAuth(msg);

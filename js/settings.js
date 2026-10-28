@@ -149,7 +149,7 @@ function avatarPickerHtml(u) {
     </div>
     <label class="av-drop" id="avDrop" tabindex="0">
       <input type="file" id="avFile" accept="image/*" class="sr-only">
-      ${icon('upload')}<span><b>Своё фото</b><span class="hint">Перетащите сюда или нажмите, чтобы выбрать из галереи или с компьютера</span></span>
+      ${icon('upload')}<span><b>Своё фото</b><span class="hint dnd-only">Перетащите сюда или нажмите, чтобы выбрать с компьютера</span><span class="hint touch-only">Выбрать из галереи</span></span>
     </label>
   </div>`;
 }
@@ -207,7 +207,7 @@ function segHtml(name, value, opts) {
 }
 // Предпросмотр — те же классы, что у настоящих задач (вид задаётся классами на <body>).
 function previewCards() {
-  const view = pref('statusView'), who = pref('showAssignee'), demo = [
+  const view = pref('statusView'), who = pref('showAssignee'), prio = prioShown(), demo = [
     ['todo', 'Купить подарки', 'Список — в заметках, бюджет до пятницы', me()],
     ['doing', 'Подготовить презентацию', '', { id: 'demo-a', name: 'Аня', avatar: 'preset:2' }],
     ['done', 'Созвон в 15:00', 'Итоги — в общем чате', { id: 'demo-b', name: 'Макс', avatar: 'preset:9' }],
@@ -217,7 +217,9 @@ function previewCards() {
     const status = view === 'hide' ? '' : view === 'dot'
       ? `<span class="st st-ind ro" data-s="${s}" title="${st.label}"><span class="dot"></span></span>`
       : `<span class="st ro" data-s="${s}">${statusIcon(s)}<span class="lbl">${st.label}</span></span>`;
-    return `<div class="task${s === 'done' ? ' done' : ''}" data-s="${s}" style="--ro:${i * 97 + 40}deg"><span class="t-fx" aria-hidden="true"></span>
+    const hi = i === 0, pr = prio && s !== 'done';
+    return `<div class="task${s === 'done' ? ' done' : ''}${pr ? ` has-pr pr-${hi ? 'hi' : 'lo'}` : ''}" data-s="${s}" style="--ro:${i * 97 + 40}deg"><span class="t-fx" aria-hidden="true"></span>
+      ${pr ? `<span class="t-pr ro"><span>${hi ? 'Важно' : 'Потом'}</span></span>` : ''}
       <div class="t-head"><span class="t-main"><span class="t-title">${title}</span>${desc ? `<span class="t-sub">${desc}</span>` : ''}</span>
       <div class="t-side">${who ? `<span class="av-btn ro">${avatar(u)}</span>` : ''}${status}</div></div></div>`;
   }).join('');
@@ -254,6 +256,10 @@ function buildLookPage() {
         <span class="hint">Аватар исполнителя в строке задачи — в группах (в «Моих задачах» все задачи ваши).${
           state.db.groups.some(g => isMember(g.id)) ? '' : ' Сейчас вы не состоите ни в одной группе — аватар виден только в предпросмотре выше.'}</span></span>
         <input type="checkbox" class="switch" role="switch" id="prefAssignee"${pref('showAssignee') ? ' checked' : ''}></label>
+      <label class="switch-row"><span class="txt"><span>Режим «Важно / Потом»</span>
+        <span class="hint">Метка слева от задач и вкладки «Важные · Потом · Готовые» — в папках, где режим включён
+          (меню папки: удержание или правая кнопка мыши). Выключение действует только у вас.</span></span>
+        <input type="checkbox" class="switch" role="switch" id="prefPrio"${prioShown() ? ' checked' : ''}></label>
     </section>`;
   syncPad();  // точка свечения на мини-экране
 }
@@ -317,6 +323,7 @@ function buildFoldersPage() {
   const rows = folders.map(f => `<div class="f-row" data-f="${f.id}">
       <form class="f-name" data-f-rename="${f.id}" novalidate><label class="sr-only" for="f-${f.id}-name">Название папки</label>
         <input class="input" id="f-${f.id}-name" value="${esc(f.name)}" maxlength="40" autocomplete="off"${f.kind === 'transfers' ? ' readonly title="Служебная папка: сюда приходят переданные вам задачи"' : ''}></form>
+      <button type="button" class="icon-btn prio-tg${f.prio ? ' on' : ''}" data-f-prio="${f.id}" aria-pressed="${!!f.prio}" aria-label="Режим «Важно / Потом»" title="Режим «Важно / Потом»: ${f.prio ? 'включён' : 'выключен'}">${icon('flag')}</button>
       <label class="eye-tg" title="${f.hidden ? 'Скрыта от других' : 'Видна другим'}"><input type="checkbox" class="sr-only" data-f-hide="${f.id}"${f.hidden ? '' : ' checked'}>
         ${icon(f.hidden ? 'eye-off' : 'eye')}<span class="sr-only">Видна другим</span></label>
       ${f.kind === 'transfers' ? '' : state.confirmDel === f.id
@@ -442,6 +449,7 @@ $('#stBody').addEventListener('click', e => {
     ops.removeGroup(id).then(okk => okk && toast(`Группа «${name}» удалена`));
     return;
   }
+  const fp = e.target.closest('[data-f-prio]'); if (fp) return toggleFolderPrio(fp.dataset.fPrio);
   const fd = e.target.closest('[data-f-del]');
   if (fd) {
     const id = fd.dataset.fDel;
@@ -461,6 +469,7 @@ $('#stBody').addEventListener('click', e => {
 $('#stBody').addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'prefAssignee') setPref('showAssignee', t.checked);
+  else if (t.id === 'prefPrio') setPref('prioOff', !t.checked);
   else if (t.id === 'prefAnim') setPref('fxAnim', t.checked);
   else if (t.id === 'rootVisible') ops.patchSelf({ rootHidden: !t.checked });
   else if (t.dataset.member) {
