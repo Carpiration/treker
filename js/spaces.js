@@ -169,17 +169,20 @@ function placePicker() {
   pn.style.left = over > 0 ? -over + 'px' : '0px';
 }
 addEventListener('resize', placePicker);
-function setPicker(open, focusBtn) {
+// byHover — открыт наведением мыши: фокус не трогаем (можно дальше печатать), уход курсора закрывает.
+let fpByHover = false;
+function setPicker(open, focusBtn, byHover = false) {
   if (!!state.fpOpen === open) return;
-  state.fpOpen = open;
-  if (!open) state.newFolder = false;
+  state.fpOpen = open; fpByHover = open && byHover;
+  if (!open) { state.newFolder = false; fpHoverBlock = fpPointerIn; }  // закрыли под курсором — не раскрываем снова, пока он не уйдёт
   renderChips();
-  if (open && !state.newFolder) ($('#fpPanel .fp-row.on .fp-item') || $('#fpPanel .fp-item'))?.focus({ preventScroll: true });
+  if (open && !byHover && !state.newFolder) ($('#fpPanel .fp-row.on .fp-item') || $('#fpPanel .fp-item'))?.focus({ preventScroll: true });
   if (!open && focusBtn) $('#fpBtn')?.focus();
 }
 $('#chips').addEventListener('click', e => {
-  if (e.target.closest('#fpBtn')) return setPicker(!state.fpOpen);
-  if (e.target.closest('[data-new-folder]')) { state.newFolder = true; renderChips(); return; }
+  // Открыт наведением — клик его «закрепляет» (не закрывает); дальше клик работает как обычно.
+  if (e.target.closest('#fpBtn')) { if (state.fpOpen && fpByHover) { fpByHover = false; return; } return setPicker(!state.fpOpen); }
+  if (e.target.closest('[data-new-folder]')) { state.newFolder = true; fpByHover = false; renderChips(); return; }
   const eye = e.target.closest('[data-eye]');
   if (eye) {
     const v = eye.dataset.eye;
@@ -204,6 +207,27 @@ $('#chips').addEventListener('keydown', e => {
   }
 });
 // Клик или касание мимо списка — закрыть.
+// Наведение мышью (ПК): список раскрывается сам и сворачивается, когда курсор уходит с кнопки и списка.
+let fpHoverT = null, fpHoverBlock = false, fpPointerIn = false;
+const inPicker = el => !!el?.closest?.('#fpBtn, #fpPanel');
+document.addEventListener('pointerover', e => {
+  if (e.pointerType !== 'mouse') return;
+  fpPointerIn = inPicker(e.target);
+  // Сброс запрета — только когда курсор ушёл из полосы выбора (после перерисовки он на миг оказывается над её фоном).
+  if (!e.target.closest?.('#chips')) fpHoverBlock = false;
+  if (!fpPointerIn) return;
+  if (fpHoverBlock || $('#chips').hidden) return;
+  clearTimeout(fpHoverT);
+  if (!state.fpOpen) fpHoverT = setTimeout(() => setPicker(true, false, true), 200);
+});
+document.addEventListener('pointerout', e => {
+  if (e.pointerType !== 'mouse' || !inPicker(e.target) || inPicker(e.relatedTarget)) return;
+  clearTimeout(fpHoverT);
+  if (state.fpOpen && fpByHover) fpHoverT = setTimeout(() => {
+    // Не закрываем, пока открыто меню папки или печатается название новой папки.
+    if (fpByHover && !ctxOpen() && !state.newFolder) setPicker(false);
+  }, 380);
+});
 // Esc закрывает список папок, даже если фокус ушёл из него (например, после меню папки).
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.fpOpen && !e.defaultPrevented && !$('#settings').open && !ctxOpen()) { e.preventDefault(); setPicker(false, true); } });
 document.addEventListener('pointerdown', e => { if (state.fpOpen && !e.target.closest('#chips') && !e.target.closest('#ctx')) setPicker(false); });

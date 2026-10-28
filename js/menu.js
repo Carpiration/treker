@@ -250,6 +250,8 @@ function folderAction(fid, act, b) {
 function closeCtx(focusTask) {
   const m = $('#ctx'); if (m.hidden) return;
   m.hidden = true; ctxPick = null;
+  // Список папок раскрыт наведением, а курсор уже ушёл — после меню сворачиваем и его.
+  if (fpByHover && !fpPointerIn) setTimeout(() => { if (fpByHover && !fpPointerIn && !ctxOpen()) setPicker(false); }, 380);
   $$('#list .ctx-on').forEach(el => el.classList.remove('ctx-on'));
   if (focusTask) $(`[data-main="${ctxTask}"]`)?.focus({ preventScroll: true });
   ctxTask = null;
