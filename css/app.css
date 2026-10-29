@@ -417,9 +417,8 @@ dialog.closing::backdrop{animation:fade-out 160ms forwards}
 .task[data-s="done"]{--st:var(--st-done)}
 .task.menu-on{z-index:30}
 .t-fx{position:absolute;inset:0;z-index:-1;overflow:hidden;border-radius:inherit;pointer-events:none;container-type:inline-size}
-.t-sub{display:grid;grid-template-rows:1fr;margin-top:2px;transition:grid-template-rows var(--t-peek-out) var(--ease-peek),opacity var(--t-peek-out) ease,margin var(--t-peek-out) var(--ease-peek);color:var(--faint);font-size:12.5px;line-height:1.4}
-.t-sub-in{display:block;min-height:0;overflow:hidden;white-space:pre-line;overflow-wrap:anywhere}
-.task.open .t-sub{grid-template-rows:0fr;margin-top:0;opacity:0;transition-duration:var(--t-peek),calc(var(--t-peek) * .5),var(--t-peek)}
+.t-sub{display:block;max-height:60em;white-space:pre-line;margin-top:2px;transition:max-height var(--t-peek-out) var(--ease-peek),opacity var(--t-peek-out) ease,margin var(--t-peek-out) var(--ease-peek);color:var(--faint);font-size:12.5px;line-height:1.4;overflow:hidden;overflow-wrap:anywhere}
+.task.open .t-sub{max-height:0;margin-top:0;opacity:0;transition-duration:var(--t-peek),calc(var(--t-peek) * .5),var(--t-peek)}
 
 /* карточки: «лучи» и «обводка» */
 body.fx-rays .list,body.fx-outline .list{gap:8px}
