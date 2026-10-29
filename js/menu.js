@@ -21,6 +21,7 @@ function setMenu(m, open, by) {
     openMenu = m; m.dataset.by = by;
     if (!list.hidden) return;
     list.hidden = false; btn.setAttribute('aria-expanded', 'true');
+    m.closest('.task')?.classList.add('menu-on');
     // Не помещается снизу — раскрываем вверх (но не под закреплённую шапку).
     m.classList.remove('up'); list.style.maxHeight = '';
     const b = btn.getBoundingClientRect(), h = list.getBoundingClientRect().height;
@@ -31,6 +32,7 @@ function setMenu(m, open, by) {
     if (h > room) list.style.maxHeight = `${Math.max(room, 120)}px`;
   } else {
     list.hidden = true; btn.setAttribute('aria-expanded', 'false');
+    m.closest('.task')?.classList.remove('menu-on');
     if (openMenu === m) {
       openMenu = null;
       // Пока список был открыт, пришли изменения с другого устройства — применяем сейчас.
