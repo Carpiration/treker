@@ -19,6 +19,13 @@ function render(opts) {
   if ($('#settings').open) refreshSettings();
 }
 
+// Короткий предпросмотр описания: до 200 знаков, переносы строк и маркеры списка сохраняются.
+function subText(d) {
+  const s = d.trim().replace(/[ \t]+\n/g, '\n').replace(/\n{2,}/g, '\n');
+  if (s.length <= 200) return s;
+  const cut = s.slice(0, 200), sp = cut.search(/\s\S{0,12}$/);
+  return (sp > 120 ? cut.slice(0, sp) : cut).trimEnd() + '…';
+}
 function taskHtml(t) {
   const editing = state.editing === t.id, open = openIds().has(t.id);
   const rw = taskEditable(t), inGroup = !!t.groupId;
@@ -38,7 +45,7 @@ function taskHtml(t) {
   const head = editing
     ? `<textarea class="t-title-input" id="et-${t.id}" rows="1" maxlength="200" autocomplete="off" aria-label="Название задачи" aria-describedby="et-${t.id}-err">${esc(t.title)}</textarea>`
     : `<button type="button" class="t-main" data-main="${t.id}" aria-expanded="${open}" aria-controls="tm-${t.id}"><span class="t-title">${esc(t.title)}</span>${
-      t.desc ? `<span class="t-sub">${esc(t.desc.trim().replace(/\n{3,}/g, '\n\n'))}</span>` : ''}${
+      t.desc ? `<span class="t-sub"><span class="t-sub-in">${esc(subText(t.desc))}</span></span>` : ''}${
       view === 'hide' ? `<span class="sr-only">, ${s.label}</span>` : ''}</button>`;
   const meta = [
     showA ? (a ? `Исполнитель: ${esc(a.name)}` : 'без исполнителя') : '',

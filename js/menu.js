@@ -107,9 +107,20 @@ function onMenuPick(kind, id, value) {
 
 /* ---------- подробности: наведение, фокус с клавиатуры, касание ---------- */
 let peekOpenT = null, peekCloseT = null, underPointer = null;
+// Пока заметка раскрывается или сворачивается, строки под курсором сдвигаются:
+// решения по наведению откладываем до конца анимации и принимаем по тому, что реально под курсором.
+let peekBusy = false, peekBusyT = null, pointerXY = null;
+document.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') pointerXY = [e.clientX, e.clientY]; }, { passive: true });
+function peekSettled() {
+  peekBusy = false;
+  if (!pointerXY) return;
+  const id = document.elementFromPoint(pointerXY[0], pointerXY[1])?.closest('#list [data-task]')?.dataset.task || null;
+  underPointer = undefined; hoverTask(id);
+}
 function hoverTask(id) {
   if (id === underPointer) return;
   underPointer = id;
+  if (peekBusy) return;
   clearTimeout(peekOpenT);
   if (id && id === state.hoverId) { clearTimeout(peekCloseT); return; }
   // Закрываем не сразу: курсор, ненадолго соскочивший со строки, не «схлопывает» её.
@@ -120,12 +131,15 @@ function hoverTask(id) {
 function openIds() { return new Set([state.hoverId, state.kbdId, state.tapId, state.editing].filter(Boolean)); }
 function applyPeek() {
   const ids = openIds();
+  let changed = false;
   $$('#list [data-task]').forEach(el => {
     const on = ids.has(el.dataset.task);
     if (el.classList.contains('open') === on) return;
     el.classList.toggle('open', on);
     $('.t-main', el)?.setAttribute('aria-expanded', String(on));
+    changed = true;
   });
+  if (changed && pointerXY) { peekBusy = true; clearTimeout(peekBusyT); peekBusyT = setTimeout(peekSettled, 650); }
 }
 document.addEventListener('focusin', e => {
   const t = e.target.closest('#list [data-task]');
