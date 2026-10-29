@@ -12,7 +12,21 @@ const visibleGroups = () => (isAdmin() ? state.db.groups : userGroups(state.me))
 const groupMembers = gid => activeUsers().filter(u => isMember(gid, u.id))
   .sort((a, b) => (b.id === state.me) - (a.id === state.me) || a.name.localeCompare(b.name, 'ru'));
 const userFolders = uid => state.db.folders.filter(f => f.ownerId === uid)
-  .sort((a, b) => (b.kind === 'transfers') - (a.kind === 'transfers') || a.name.localeCompare(b.name, 'ru'));
+  .sort((a, b) => (b.kind === 'transfers') - (a.kind === 'transfers') || (a.sort || 0) - (b.sort || 0) || a.name.localeCompare(b.name, 'ru'));
+// Порядок папок: новая — в конец; «выше/ниже» меняет местами с соседней (служебная «Переданные» всегда первая).
+const nextFolderSort = () => Math.max(0, ...userFolders(state.me).map(f => f.sort || 0)) + 10;
+const movableFolders = () => userFolders(state.me).filter(f => f.kind !== 'transfers');
+function canMoveFolder(fid, dir) {
+  const l = movableFolders(), i = l.findIndex(f => f.id === fid);
+  return i >= 0 && l[i + dir] !== undefined;
+}
+async function moveFolder(fid, dir) {
+  const l = movableFolders(), i = l.findIndex(f => f.id === fid), j = i + dir;
+  if (i < 0 || !l[j]) return;
+  [l[i], l[j]] = [l[j], l[i]];
+  // Перенумеровываем весь список — порядок всегда однозначный.
+  for (const [k, f] of l.entries()) if (f.sort !== (k + 1) * 10) await ops.patchFolder(f.id, { sort: (k + 1) * 10 });
+}
 const folder = id => state.db.folders.find(f => f.id === id);
 // «Без папки» можно переименовать (у каждого своё название).
 const rootName = (u = me()) => u?.rootName || 'Без папки';
@@ -238,7 +252,7 @@ function createFolder(name) {
   state.newFolder = false;
   if (!name) { renderChips(); return; }
   if (userFolders(state.me).some(f => f.name.toLowerCase() === name.toLowerCase())) { toast('Папка с таким названием уже есть'); renderChips(); return; }
-  const f = { id: newId(), ownerId: state.me, name, hidden: false, kind: 'user', createdAt: Date.now() };
+  const f = { id: newId(), ownerId: state.me, name, hidden: false, kind: 'user', sort: nextFolderSort(), createdAt: Date.now() };
   state.folder = f.id; state.fpOpen = false;
   ops.addFolder(f).then(okk => okk && toast(`Папка «${name}» создана`));
 }

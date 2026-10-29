@@ -17,7 +17,7 @@ function cloudBackend() {
     profiles: { id: 'id', name: 'name', prefs: 'prefs', rootHidden: 'root_hidden', rootPrio: 'root_prio', rootName: 'root_name', avatar: 'avatar' },
     groups: { id: 'id', name: 'name', createdBy: 'created_by' },
     group_members: { groupId: 'group_id', userId: 'user_id' },
-    folders: { id: 'id', ownerId: 'owner_id', name: 'name', hidden: 'hidden', kind: 'kind', prio: 'prio' },
+    folders: { id: 'id', ownerId: 'owner_id', name: 'name', hidden: 'hidden', kind: 'kind', prio: 'prio', sort: 'sort' },
   };
   const toRow = (table, o) => Object.fromEntries(Object.entries(o).filter(([k]) => k in COLS[table])
     .map(([k, v]) => [COLS[table][k], k.endsWith('At') ? iso(v) : v]));
@@ -34,7 +34,7 @@ function cloudBackend() {
     prefs: r.prefs || {}, rootHidden: !!r.root_hidden, rootPrio: !!r.root_prio, rootName: r.root_name || null, avatar: r.avatar || null });
   const toGroup = r => ({ id: r.id, name: r.name, createdAt: Date.parse(r.created_at) });
   const toMember = r => ({ groupId: r.group_id, userId: r.user_id });
-  const toFolder = r => ({ id: r.id, ownerId: r.owner_id, name: r.name, hidden: r.hidden, kind: r.kind, prio: !!r.prio, createdAt: Date.parse(r.created_at) });
+  const toFolder = r => ({ id: r.id, ownerId: r.owner_id, name: r.name, hidden: r.hidden, kind: r.kind, prio: !!r.prio, sort: r.sort || 0, createdAt: Date.parse(r.created_at) });
   // Строка таблицы по ключу: { id } или составной ключ участника группы.
   const match = (q, key) => { for (const [k, v] of Object.entries(key)) q = q.eq(k, v); return q; };
   let uid = null, chan = null;

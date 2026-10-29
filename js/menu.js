@@ -208,6 +208,7 @@ function openFolderCtx(fid, x, y, byKey = false) {
       + (f.kind === 'transfers' ? '' : it('rename', `${icon('edit')}Переименовать`))
       + it('hide', `${icon(f.hidden ? 'eye' : 'eye-off')}${f.hidden ? 'Показать другим' : 'Скрыть от других'}`)
       + prioItem(!!f.prio)
+      + (canMoveFolder(fid, -1) ? it('up', `${icon('up')}Выше`) : '') + (canMoveFolder(fid, 1) ? it('down', `${icon('down')}Ниже`) : '')
       + (ft ? it('cancel-ft', `${icon('x')}Отменить передачу (${esc(user(ft.toId)?.name || '—')})`) : it('give', `${icon('move')}Передать папку целиком…`))
       + (f.kind === 'transfers' ? '' : '<div class="menu-sep" role="separator"></div>' + it('del', `${icon('trash')}Удалить папку…`, ' danger'));
   }
@@ -241,6 +242,7 @@ function folderAction(fid, act, b) {
   if (act === 'del-no') return;
   if (act === 'del-yes') return deleteFolder(fid);
   if (act === 'prio') return toggleFolderPrio(fid);
+  if (act === 'up' || act === 'down') return moveFolder(fid, act === 'up' ? -1 : 1);
   if (act === 'hide') {
     if (fid === 'root') return ops.patchSelf({ rootHidden: !me().rootHidden }).then(okk => okk && toast(me().rootHidden ? `«${rootName()}» скрыты от других` : `«${rootName()}» видны другим`));
     const f = folder(fid);

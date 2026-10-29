@@ -321,6 +321,7 @@ function groupHtml(g, admin) {
 function buildFoldersPage() {
   const u = me(), folders = userFolders(state.me);
   const rootRow = `<div class="f-row" data-f="root">
+      <span class="f-ord" aria-hidden="true"></span>
       <span class="f-ic" aria-hidden="true">${icon('inbox')}</span>
       <form class="f-name" data-f-rename="root" novalidate><label class="sr-only" for="f-root-name">Название для задач без папки</label>
         <input class="input" id="f-root-name" value="${esc(rootName(u))}" maxlength="40" autocomplete="off" placeholder="Без папки"></form>
@@ -330,6 +331,9 @@ function buildFoldersPage() {
       <span class="f-del-gap" aria-hidden="true"></span>
     </div>`;
   const rows = folders.map(f => `<div class="f-row" data-f="${f.id}">
+      ${f.kind === 'transfers' ? '<span class="f-ord" aria-hidden="true"></span>' : `<span class="f-ord">
+        <button type="button" class="f-mv" data-f-mv="-1:${f.id}" aria-label="Выше"${canMoveFolder(f.id, -1) ? '' : ' disabled'}>${icon('up')}</button>
+        <button type="button" class="f-mv" data-f-mv="1:${f.id}" aria-label="Ниже"${canMoveFolder(f.id, 1) ? '' : ' disabled'}>${icon('down')}</button></span>`}
       <span class="f-ic" aria-hidden="true">${icon('folder')}</span>
       <form class="f-name" data-f-rename="${f.id}" novalidate><label class="sr-only" for="f-${f.id}-name">Название папки</label>
         <input class="input" id="f-${f.id}-name" value="${esc(f.name)}" maxlength="40" autocomplete="off"${f.kind === 'transfers' ? ' readonly title="Служебная папка: сюда приходят переданные вам задачи"' : ''}></form>
@@ -457,6 +461,8 @@ $('#stBody').addEventListener('click', e => {
     ops.removeGroup(id).then(okk => okk && toast(`Группа «${name}» удалена`));
     return;
   }
+  const fm = e.target.closest('[data-f-mv]');
+  if (fm) { const [d, id] = fm.dataset.fMv.split(':'); moveFolder(id, +d).then(() => { buildSettings(); $(`[data-f-mv="${d}:${id}"]:not([disabled])`)?.focus(); }); return; }
   const fp = e.target.closest('[data-f-prio]'); if (fp) return toggleFolderPrio(fp.dataset.fPrio);
   const fd = e.target.closest('[data-f-del]');
   if (fd) {
@@ -535,7 +541,7 @@ $('#stBody').addEventListener('submit', async e => {
   } else if (f.id === 'folderNew') {
     const inp = $('#fNewName'), name = inp.value.trim();
     if (!setErr(inp, nameError(name, userFolders(state.me).some(x => x.name.toLowerCase() === name.toLowerCase())))) return inp.focus();
-    if (await ops.addFolder({ id: newId(), ownerId: state.me, name, hidden: false, kind: 'user', createdAt: Date.now() })) { toast(`Папка «${name}» создана`); buildSettings(); $('#fNewName')?.focus(); }
+    if (await ops.addFolder({ id: newId(), ownerId: state.me, name, hidden: false, kind: 'user', sort: nextFolderSort(), createdAt: Date.now() })) { toast(`Папка «${name}» создана`); buildSettings(); $('#fNewName')?.focus(); }
   } else if (f.dataset.fRename === 'root') {
     const inp = $('#f-root-name'), name = inp.value.trim(), next = name && name !== 'Без папки' ? name : null;
     if ((me().rootName || null) === next) return;

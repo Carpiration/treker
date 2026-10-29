@@ -383,6 +383,11 @@ dialog.closing::backdrop{animation:fade-out 160ms forwards}
 .f-ic{display:grid;place-items:center;width:22px;flex:none;color:var(--faint)} .f-ic .i{width:17px;height:17px}
 .f-row[data-f="root"] .f-ic{color:var(--accent)}
 .f-del-gap{width:38px;flex:none}
+.f-ord{display:flex;flex-direction:column;width:26px;flex:none}
+.f-mv{display:grid;place-items:center;width:26px;height:20px;padding:0;border:0;border-radius:6px;background:none;color:var(--muted)}
+.f-mv .i{width:16px;height:16px}
+.f-mv:hover:not(:disabled){background:var(--surface-4);color:var(--text)}
+.f-mv:disabled{opacity:.25;cursor:default}
 .f-name{flex:1;min-width:0}
 .f-name .input{min-height:40px}
 .f-name .input[readonly]{color:var(--muted);border-style:dashed}

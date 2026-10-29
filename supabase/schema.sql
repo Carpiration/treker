@@ -1190,3 +1190,12 @@ begin
 end $$;
 revoke execute on function public.transfer_root(uuid) from public, anon;
 grant execute on function public.transfer_root(uuid) to authenticated;
+
+-- ============================================================
+-- Порядок папок: folders.sort (меньше — выше), служебная «Переданные» всегда первая
+-- ============================================================
+alter table public.folders add column if not exists sort int not null default 0;
+update public.folders f set sort = r.rn * 10
+from (select id, row_number() over (partition by owner_id order by lower(name)) rn from public.folders) r
+where r.id = f.id and f.sort = 0;
+grant insert (sort), update (sort) on public.folders to authenticated;
