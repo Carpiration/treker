@@ -16,7 +16,7 @@
   --r-lg:14px; --r:12px; --r-sm:8px;
   --shadow-pop:0 12px 32px rgba(0,0,0,.5),0 2px 8px rgba(0,0,0,.35);
   --t-fast:120ms; --t:200ms; --t-slow:280ms; --ease:cubic-bezier(.2,.8,.2,1);
-  --t-peek:420ms; --t-peek-out:560ms; --ease-peek:cubic-bezier(.32,.72,0,1);
+  --t-peek:420ms; --t-peek-out:340ms; --ease-peek:cubic-bezier(.32,.72,0,1);
   --font:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   --gutter:clamp(10px,4vw,20px);
   color-scheme:dark;
@@ -242,7 +242,6 @@ main{padding-top:2px}
 .task.editing{border-color:var(--accent-line)}
 .t-head{display:flex;align-items:center;gap:4px;min-height:46px;padding:4px 6px 4px 4px}
 .t-main{flex:1;min-width:0;display:block;overflow:hidden;padding:7px 8px;border:0;border-radius:var(--r-sm);background:none;text-align:left}
-.t-main:focus-visible{outline:none}
 .t-title{font-weight:500;overflow-wrap:anywhere;transition:color var(--t)}
 .nowrap{white-space:nowrap}
 .task.done .t-title{color:var(--faint);text-decoration:line-through;text-decoration-color:var(--border-hover)}
@@ -417,7 +416,7 @@ dialog.closing::backdrop{animation:fade-out 160ms forwards}
 .task[data-s="done"]{--st:var(--st-done)}
 .task.menu-on{z-index:30}
 .t-fx{position:absolute;inset:0;z-index:-1;overflow:hidden;border-radius:inherit;pointer-events:none;container-type:inline-size}
-.t-sub{display:block;max-height:60em;white-space:pre-line;margin-top:2px;transition:max-height var(--t-peek-out) var(--ease-peek),opacity var(--t-peek-out) ease,margin var(--t-peek-out) var(--ease-peek);color:var(--faint);font-size:12.5px;line-height:1.4;overflow:hidden;overflow-wrap:anywhere}
+.t-sub{display:-webkit-box;max-height:3em;margin-top:2px;transition:max-height var(--t-peek-out) var(--ease-peek),opacity var(--t-peek-out) ease,margin var(--t-peek-out) var(--ease-peek);color:var(--faint);font-size:12.5px;line-height:1.4;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
 .task.open .t-sub{max-height:0;margin-top:0;opacity:0;transition-duration:var(--t-peek),calc(var(--t-peek) * .5),var(--t-peek)}
 
 /* карточки: «лучи» и «обводка» */
