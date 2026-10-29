@@ -113,7 +113,7 @@ function hoverTask(id) {
   clearTimeout(peekOpenT);
   if (id && id === state.hoverId) { clearTimeout(peekCloseT); return; }
   // Закрываем не сразу: курсор, ненадолго соскочивший со строки, не «схлопывает» её.
-  if (state.hoverId) { clearTimeout(peekCloseT); peekCloseT = setTimeout(() => { state.hoverId = null; applyPeek(); }, 220); }
+  if (state.hoverId) { clearTimeout(peekCloseT); peekCloseT = setTimeout(() => { state.hoverId = null; applyPeek(); }, 800); }
   // Задержка перед раскрытием: проводя курсором по списку, не раскрываем каждую строку.
   if (id) peekOpenT = setTimeout(() => { clearTimeout(peekCloseT); state.hoverId = id; applyPeek(); }, state.hoverId ? 260 : 320);
 }
@@ -131,6 +131,13 @@ document.addEventListener('focusin', e => {
   const t = e.target.closest('#list [data-task]');
   const id = t && e.target.matches(':focus-visible') ? t.dataset.task : null;
   if (id !== state.kbdId) { state.kbdId = id; applyPeek(); }
+});
+// Фокус ушёл со строки (клик в пустое место, другое окно) — снимаем «закрепление» раскрытия.
+document.addEventListener('focusout', e => {
+  if (!state.kbdId || !e.target.closest('#list [data-task]')) return;
+  const to = e.relatedTarget?.closest?.('#list [data-task]');
+  if (to) return;
+  state.kbdId = null; applyPeek();
 });
 
 /* ---------- меню задачи: правая кнопка мыши, долгое нажатие, клавиша «Меню» / Shift+F10 ----------
