@@ -240,6 +240,8 @@ const ops = {
     if (fid) db.folders.find(f => f.id === fid).prio = on; else db.users.find(u => u.id === state.me).rootPrio = on;
     if (on) for (const t of db.tasks) if (!t.groupId && t.ownerId === state.me && (t.folderId || null) === fid && !t.deletedAt) t.important = true;
   }, () => backend.rpc('set_folder_prio', { p_folder: fid, p_on: on })),
+  // Напоминание участникам общей папки: уведомление всем, кроме нажавшего. Возвращает, скольким ушло (или null при ошибке).
+  remindTask: async id => { try { return Number(await backend.rpc('remind_task', { p_task: id })) || 0; } catch (e) { toast(errText(e)); return null; } },
   // Режим «Сроки»: у папки или у «Без папки» (fid = null).
   setFolderDue: (fid, on) => fid ? ops.patchFolder(fid, { due: on }) : ops.patchSelf({ rootDue: on }),
   // Общие папки. Всё идёт функциями базы: права на сервере, здесь — мгновенное отображение.

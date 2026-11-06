@@ -30,6 +30,14 @@ async function config(): Promise<Config> {
   return c;
 }
 
+// Срок в тексте напоминания: «сегодня», «завтра», «13 нояб» (день считаем по Ташкенту, UTC+5).
+const MON = ['янв', 'февр', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сент', 'окт', 'нояб', 'дек'];
+function dueText(s: string) {
+  const [y, m, d] = s.split('-').map(Number), now = new Date(Date.now() + 5 * 3600e3);
+  const diff = Math.round((Date.UTC(y, m - 1, d) - Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())) / 864e5);
+  const lbl = diff === 0 ? 'сегодня' : diff === 1 ? 'завтра' : `${d} ${MON[m - 1]}`;
+  return diff < 0 ? `${lbl} (просрочено)` : lbl;
+}
 const LABEL: Record<string, string> = { todo: 'Не начато', doing: 'В процессе', done: 'Готово' };
 function message(n: any, actor: string) {
   const t = `«${n.title}»`, d = n.data || {};
@@ -56,7 +64,9 @@ function message(n: any, actor: string) {
     }
   }
   switch (n.kind) {
-    case 'assigned': return { title: 'Новая задача', body: `${actor} назначил(а) вам ${t}` };
+    case 'assigned':
+      if (d.remind) return { title: 'Напоминание', body: `${actor} напоминает: нужно выполнить ${t}${d.due ? ` · срок ${dueText(d.due)}` : ''}${d.shared_name ? ` · папка «${d.shared_name}»` : ''}`, vibrate: [200, 100, 200, 100, 200] };
+      return { title: 'Новая задача', body: `${actor} назначил(а) вам ${t}` };
     case 'status': return { title: `Статус: ${LABEL[d.to] || d.to}`, body: `${actor} изменил(а) статус ${t}${d.shared_name ? ` · общая папка «${d.shared_name}»` : ''}` };
     case 'deleted': return { title: 'Задача удалена', body: `${actor} удалил(а) ${t}` };
     case 'restored': return { title: 'Задача восстановлена', body: `${actor} восстановил(а) ${t}` };
@@ -100,7 +110,7 @@ Deno.serve(async (req) => {
     const { data: a } = n.actor_id ? await db.from('profiles').select('name').eq('id', n.actor_id).maybeSingle() : { data: null };
     const m = message(n, a?.name || 'Кто-то');
     const res = await deliver(n.user_id, { ...m, tag: n.task_id ? `task-${n.task_id}` : `n-${n.id}`, note: n.id, url: `${SITE}?note=${n.id}` }, cfg,
-      n.kind === 'transfer_request');
+      n.kind === 'transfer_request' || !!(n.data || {}).remind);
     return json(res);
   }
   if (body.op === 'test') {

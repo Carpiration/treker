@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-title" content="Задачи">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script src="config.js"></script>
-<link rel="stylesheet" href="css/app.css?v=20261106c">
+<link rel="stylesheet" href="css/app.css?v=20261106e">
 </head>
 <body>
 <script>
@@ -98,12 +98,13 @@ try { var L = JSON.parse(localStorage.getItem('treker-look') || 'null');
       <div class="c-box" id="cBox">
         <button type="button" class="t-pr c-pr" id="nPrio" hidden></button>
         <div class="c-main">
-        <label class="sr-only" for="nTitle">Новая задача</label>
-        <input class="c-title" id="nTitle" placeholder="Новая задача" maxlength="200" autocomplete="off" aria-describedby="nTitleErr">
+        <label class="sr-only" for="nTitle">Название задачи</label>
+        <input class="c-title" id="nTitle" placeholder="Название задачи" maxlength="200" autocomplete="off" aria-describedby="nTitleErr">
         <!-- Описание: тонкая полоска с подсказкой (или началом текста); по клику раскрывается поле фиксированной высоты. -->
         <div class="c-desc" id="cDesc">
           <div class="c-peek-row">
             <button type="button" class="c-peek" id="descPeek" aria-controls="nDesc" aria-expanded="false"><svg class="i" aria-hidden="true"><use href="#i-text"/></svg><span class="c-peek-tx" id="descPeekTx">Описание — необязательно</span></button>
+            <button type="button" class="c-due-btn" id="nDue" hidden></button>
             <button type="button" class="c-attach" id="nAttach" aria-label="Прикрепить изображения (до 5)" title="Изображения — до 5"><svg class="i" aria-hidden="true"><use href="#i-image"/></svg><span class="c-attach-n" id="nAttachN"></span></button>
           </div>
           <div class="c-desc-wrap"><div>
@@ -118,7 +119,6 @@ try { var L = JSON.parse(localStorage.getItem('treker-look') || 'null');
       </div>
       <div class="c-side">
         <div id="nAssignSlot" hidden></div>
-        <div class="c-due" id="nDueSlot" hidden><button type="button" class="c-due-btn" id="nDue"></button><input type="date" id="nDueIn" class="c-due-in" tabindex="-1" aria-hidden="true"></div>
         <button class="btn primary c-add" type="submit" id="nSubmit" aria-label="Добавить задачу" title="Добавить (Shift+Enter)" aria-keyshortcuts="Shift+Enter"><span class="c-add-tx" aria-hidden="true">Добавить</span></button>
       </div>
     </form>
@@ -158,18 +158,19 @@ try { var L = JSON.parse(localStorage.getItem('treker-look') || 'null');
 <div class="menu-list ctx" id="ctx" role="menu" aria-label="Действия с задачей" hidden></div>
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
-<script src="js/core.js?v=20261106c" defer></script>
-<script src="js/backend.js?v=20261106c" defer></script>
-<script src="js/spaces.js?v=20261106c" defer></script>
-<script src="js/auth.js?v=20261106c" defer></script>
-<script src="js/menu.js?v=20261106c" defer></script>
-<script src="js/list.js?v=20261106c" defer></script>
-<script src="js/images.js?v=20261106c" defer></script>
-<script src="js/look.js?v=20261106c" defer></script>
-<script src="js/settings.js?v=20261106c" defer></script>
-<script src="js/share.js?v=20261106c" defer></script>
-<script src="js/activity.js?v=20261106c" defer></script>
-<script src="js/push.js?v=20261106c" defer></script>
-<script src="js/main.js?v=20261106c" defer></script>
+<script src="js/core.js?v=20261106e" defer></script>
+<script src="js/backend.js?v=20261106e" defer></script>
+<script src="js/spaces.js?v=20261106e" defer></script>
+<script src="js/auth.js?v=20261106e" defer></script>
+<script src="js/menu.js?v=20261106e" defer></script>
+<script src="js/list.js?v=20261106e" defer></script>
+<script src="js/images.js?v=20261106e" defer></script>
+<script src="js/look.js?v=20261106e" defer></script>
+<script src="js/settings.js?v=20261106e" defer></script>
+<script src="js/due.js?v=20261106e" defer></script>
+<script src="js/share.js?v=20261106e" defer></script>
+<script src="js/activity.js?v=20261106e" defer></script>
+<script src="js/push.js?v=20261106e" defer></script>
+<script src="js/main.js?v=20261106e" defer></script>
 </body>
 </html>

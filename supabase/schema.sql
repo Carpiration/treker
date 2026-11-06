@@ -1701,3 +1701,33 @@ begin
   end if;
   return new;
 end $$;
+
+-- =====================================================================
+-- Напоминание по задаче общей папки: одним нажатием уведомление всем участникам (кроме нажавшего).
+-- Вид уведомления прежний ('assigned'), признак — data.remind.
+create or replace function public.remind_task(p_task uuid) returns integer
+language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid(); t public.tasks; f public.folders; n int := 0; r uuid;
+begin
+  if me is null or not public.is_active() then raise exception 'Нет доступа'; end if;
+  select * into t from public.tasks where id = p_task and deleted_at is null;
+  if not found or t.folder_id is null then raise exception 'Задача не найдена'; end if;
+  select * into f from public.folders where id = t.folder_id and shared;
+  if not found then raise exception 'Напоминать можно только в общей папке'; end if;
+  if not public.folder_open(f.id) then raise exception 'Вы не состоите в этой папке'; end if;
+  if t.status = 'done' then raise exception 'Задача уже выполнена'; end if;
+  if exists (select 1 from public.notifications
+             where task_id = t.id and kind = 'assigned' and data ? 'remind' and created_at > now() - interval '15 minutes') then
+    raise exception 'Напоминание по этой задаче уже отправлено — подождите немного';
+  end if;
+  for r in select f.owner_id union select user_id from public.folder_members where folder_id = f.id loop
+    if r is distinct from me then
+      perform public.notify(r, 'assigned', t.id, t.title, me,
+        jsonb_build_object('remind', true, 'due', t.due_date, 'shared_name', f.name, 'assignee', t.assignee_id));
+      n := n + 1;
+    end if;
+  end loop;
+  return n;
+end $$;
+revoke execute on function public.remind_task(uuid) from public, anon;
+grant execute on function public.remind_task(uuid) to authenticated;

@@ -20,6 +20,7 @@ function render(opts) {
   if ($('#settings').open) refreshSettings();
 }
 
+const dueBtnInner = v => `${icon('cal')}<span>${v ? esc(dueLabel(v)) : 'Срок не задан'}</span>`;
 function taskHtml(t) {
   const editing = state.editing === t.id, open = openIds().has(t.id);
   const rw = taskEditable(t), inGroup = !!t.groupId, sf = sharedOf(t), stRw = taskStatusable(t);
@@ -40,12 +41,16 @@ function taskHtml(t) {
   const dueOn = taskDue(t) && !!t.dueDate, dn = dueOn ? dayDiff(t.dueDate) : 0, over = dueOn && t.status !== 'done' && dn < 0;
   const dueCls = !dueOn ? '' : t.status === 'done' ? '' : dn < 0 ? ' over' : dn <= 1 ? ' soon' : '';
   const dueTitle = !dueOn ? '' : over ? `Просрочено на ${-dn} дн (срок ${dueLabel(t.dueDate)})` : `Срок: ${dueLabel(t.dueDate)}`;
-  const dueChip = dueOn ? `<span class="t-due${dueCls}" title="${esc(dueTitle)}">${icon('cal')}<span>${esc(dueLabel(t.dueDate))}</span></span>` : '';
+  // Срок — отдельной строкой под названием: виден всегда; тем, кто может править, по нажатию открывает выбор срока.
+  const dueInner = !dueOn ? '' : `${icon('cal')}<span>${esc(dueLabel(t.dueDate))}</span>${over ? '<span class="t-due-over">просрочено</span>' : ''}`;
+  const dueChip = !dueOn || editing ? '' : `<div class="t-due-row">${rw
+    ? `<button type="button" class="t-due${dueCls}" data-due-edit="${t.id}" title="${esc(dueTitle)} — нажмите, чтобы изменить" aria-label="${esc(dueTitle)}. Изменить срок">${dueInner}</button>`
+    : `<span class="t-due${dueCls}" title="${esc(dueTitle)}">${dueInner}</span>`}</div>`;
   const head = editing
     ? `<textarea class="t-title-input" id="et-${t.id}" rows="1" maxlength="200" autocomplete="off" aria-label="Название задачи" aria-describedby="et-${t.id}-err">${esc(t.title)}</textarea>`
     : `<button type="button" class="t-main" data-main="${t.id}" aria-expanded="${open}" aria-controls="tm-${t.id}"><span class="t-title">${esc(t.title)}</span>${
       t.desc ? `<span class="t-sub">${esc(t.desc.replace(/\s+/g, ' ').slice(0, 240))}</span>` : ''}${
-      view === 'hide' ? `<span class="sr-only">, ${s.label}</span>` : ''}${dueChip}</button>`;
+      view === 'hide' ? `<span class="sr-only">, ${s.label}</span>` : ''}</button>`;
   const meta = [
     showA ? (a ? `Исполнитель: ${esc(a.name)}` : 'без исполнителя') : '',
     !inGroup && t.folderId && folder(t.folderId) && (state.folder === 'all' || sf) ? `${sf ? 'общая папка' : 'папка'} «${esc(folder(t.folderId).name)}»` : '',
@@ -57,25 +62,26 @@ function taskHtml(t) {
   const trNote = tr ? `<div class="t-wait">${icon('clock')}Ждёт согласия: ${esc(user(tr.toId)?.name || '—')}</div>`
     : pq ? `<div class="t-wait">${icon('clock')}${pq.requesterId === state.me ? `Заявка «${pq.want ? 'Важно' : 'Потом'}» ждёт ответа администратора` : `${esc(nick(pq.requesterId))} просит «${pq.want ? 'Важно' : 'Потом'}»`}${
       pq.requesterId === state.me ? ` <button type="button" class="link" data-cancel-prio="${pq.id}">Отозвать</button>` : ''}</div>` : '';
+  // Напоминание: любой участник общей папки одним нажатием — всем остальным уходит уведомление (со сроком).
+  const remind = !!sf && t.status !== 'done';
   const more = editing ? `
       <div class="field-error" id="et-${t.id}-err" hidden></div>
       <label class="sr-only" for="ed-${t.id}">Описание</label>
       <textarea class="t-desc-input" id="ed-${t.id}" maxlength="5000" placeholder="Описание: что именно, где, как проверить">${esc(t.desc)}</textarea>
-      ${taskDue(t) ? `<label class="t-due-edit">${icon('cal')}<span>Срок</span><input type="date" id="edu-${t.id}" value="${t.dueDate || ''}"></label>` : ''}
-      ${imgsHtml(t, true)}
+      <div class="t-tools">${taskDue(t) ? `<button type="button" class="t-due-pick${t.dueDate ? ' set' : ''}" id="edu-${t.id}" data-due-pick="${t.id}" data-value="${t.dueDate || ''}" aria-label="Срок: ${t.dueDate ? esc(dueLabel(t.dueDate)) : 'без срока'}. Выбрать">${dueBtnInner(t.dueDate)}</button>` : ''}
+        ${imgsHtml(t, true)}</div>
       <div class="t-actions">
         <button class="btn primary sm" type="submit">Сохранить</button>
         <button class="btn ghost sm" type="button" data-cancel>Отмена</button>
         <button class="btn ghost sm danger push" type="button" data-del="${t.id}">${icon('trash')}Удалить</button>
       </div>`
     : `${t.desc ? `<p class="t-desc">${esc(t.desc)}</p>` : ''}${imgsHtml(t, false)}
-      <div class="t-meta">${meta.charAt(0).toUpperCase() + meta.slice(1)}</div>${trNote}
-      ${rw || t.desc ? `<div class="t-actions">${rw ? `
+      <div class="t-meta-row"><div class="t-meta">${meta.charAt(0).toUpperCase() + meta.slice(1)}</div>${t.desc ? `<button class="icon-btn t-copy" type="button" data-copy="${t.id}" aria-label="Скопировать описание" title="Скопировать описание">${icon('copy')}</button>` : ''}</div>${trNote}
+      ${rw || remind ? `<div class="t-actions">${remind ? `<button class="btn ghost sm" type="button" data-remind="${t.id}" title="Всем участникам папки придёт уведомление, что задачу нужно выполнить">${icon('bell')}Напомнить</button>` : ''}${rw ? `
         <button class="btn ghost sm" type="button" data-edit="${t.id}">${icon('edit')}Изменить</button>
         ${tr ? `<button class="btn ghost sm" type="button" data-cancel-tr="${tr.id}">${icon('x')}Отменить передачу</button>`
           : taskMovable(t) ? `<button class="btn ghost sm" type="button" data-move="${t.id}">${icon('move')}Перенести</button>` : ''}
         <button class="btn ghost sm danger" type="button" data-del="${t.id}">${icon('trash')}Удалить</button>` : ''}
-        ${t.desc ? `<button class="icon-btn t-copy" type="button" data-copy="${t.id}" aria-label="Скопировать описание" title="Скопировать описание">${icon('copy')}</button>` : ''}
       </div>` : ''}`;
   // Метка важности слева (в папках с режимом «Важно / Потом»): нажатие переключает.
   const pr = taskPrio(t), prLbl = t.important ? 'Важно' : 'Потом';
@@ -89,7 +95,7 @@ function taskHtml(t) {
   // Свёрнутая задача: изображения — ровной полоской внизу, под описанием (раскрытая показывает их после полного описания).
   const strip = !editing && t.images?.length ? `<div class="t-strip" role="group" aria-label="Изображения">${t.images.map((k, i) =>
     `<button type="button" class="img-btn" data-view-img="${t.id}" data-i="${i}" tabindex="${open ? -1 : 0}" aria-label="Изображение ${i + 1} из ${t.images.length} — открыть">${thumbImg(k)}</button>`).join('')}</div>` : '';
-  const inner = `${prHtml}<div class="t-head">${head}<div class="t-side">${assignMenu}${statusMenu}</div></div>${strip}
+  const inner = `${prHtml}<div class="t-head">${head}<div class="t-side">${assignMenu}${statusMenu}</div></div>${dueChip}${strip}
     <div class="t-more" id="tm-${t.id}"><div class="t-more-in"><div class="t-pad">${more}</div></div></div>`;
   // t-fx — слой фона (лучи/переливание), --ro — свой поворот лучей у каждой задачи, чтобы карточки не были одинаковыми.
   return `<article class="task${t.status === 'done' ? ' done' : ''}${open ? ' open' : ''}${editing ? ' editing' : ''}${pr ? ` has-pr pr-${t.important ? 'hi' : 'lo'}` : ''}" data-task="${t.id}" data-s="${s.id}" style="--ro:${hue(t.id)}deg"><span class="t-fx" aria-hidden="true"></span>${
@@ -112,7 +118,7 @@ function renderList({ flip = true } = {}) {
   const prev = new Map();
   if (animate) $$('[data-task]', list).forEach(el => prev.set(el.dataset.task, el.getBoundingClientRect().top));
   const ed = state.editing && $(`#et-${CSS.escape(state.editing)}`);
-  const draft = ed && { title: ed.value, desc: $(`#ed-${CSS.escape(state.editing)}`).value, due: $(`#edu-${CSS.escape(state.editing)}`)?.value };
+  const draft = ed && { title: ed.value, desc: $(`#ed-${CSS.escape(state.editing)}`).value, due: $(`#edu-${CSS.escape(state.editing)}`)?.dataset.value };
   const fsel = focusSelector(), fa = document.activeElement;
   const sel = fa && 'selectionStart' in fa && fsel?.startsWith('#') ? [fa.selectionStart, fa.selectionEnd] : null;
 
@@ -136,7 +142,7 @@ function renderList({ flip = true } = {}) {
   }
 
   const et = state.editing && $(`#et-${CSS.escape(state.editing)}`);
-  if (draft && et) { et.value = draft.title; $(`#ed-${CSS.escape(state.editing)}`).value = draft.desc; const du = $(`#edu-${CSS.escape(state.editing)}`); if (du && draft.due != null) du.value = draft.due; }
+  if (draft && et) { et.value = draft.title; $(`#ed-${CSS.escape(state.editing)}`).value = draft.desc; const du = $(`#edu-${CSS.escape(state.editing)}`); if (du && draft.due != null) setDuePick(du, draft.due || null); }
   if (fsel) { const el = $(fsel, list); if (el) { el.focus({ preventScroll: true }); if (sel) try { el.setSelectionRange(...sel); } catch {} } }
 
   if (animate) {
@@ -254,6 +260,28 @@ function setStatus(id, s) {
   if (leaves) toast(s === 'done' ? 'Готово — задача в «Готовых»' : `Задача снова в «${VIEWS[to]}»`,
     () => setStatus(id, from));
 }
+async function remindTask(id, btn) {
+  const t = state.db.tasks.find(x => x.id === id); if (!t) return;
+  btnBusy(btn, true, 'Отправляем…');
+  const n = await ops.remindTask(id);
+  btnBusy(btn, false);
+  if (n === null) return;
+  const due = t.dueDate && taskDue(t) ? ` Срок: ${dueLabel(t.dueDate)}.` : '';
+  toast(n ? `Напомнили участникам папки (${n}): «${t.title}».${due}` : 'В папке больше никого нет — напоминать некому');
+}
+// Срок из списка: меняется сразу, с возможностью отменить.
+function setTaskDue(id, v) {
+  const t = state.db.tasks.find(x => x.id === id);
+  if (!t || (t.dueDate || null) === v || !taskEditable(t)) return;
+  const was = t.dueDate || null;
+  ops.patchTask(id, { dueDate: v });
+  toast(v ? `Срок: ${dueLabel(v)}` : 'Срок убран', () => { if ((state.db.tasks.find(x => x.id === id)?.dueDate || null) === v) ops.patchTask(id, { dueDate: was }); });
+}
+// Срок в форме «Изменить»: меняется только кнопка, в базу попадёт по «Сохранить».
+function setDuePick(btn, v) {
+  btn.dataset.value = v || ''; btn.classList.toggle('set', !!v); btn.innerHTML = dueBtnInner(v);
+  btn.setAttribute('aria-label', `Срок: ${v ? dueLabel(v) : 'без срока'}. Выбрать`);
+}
 // Важно ↔ Потом. В папке с режимом задача уходит на другую вкладку — с той же анимацией, что и «Готово».
 function setImportant(id, v) {
   const t = state.db.tasks.find(x => x.id === id);
@@ -284,21 +312,22 @@ function renderComposerPrio() {
   b.title = `Новая задача — «${hi ? 'Важно' : 'Потом'}». Нажмите, чтобы переключить`;
 }
 $('#nPrio').addEventListener('click', () => { state.newImportant = !newImportant(); renderComposerPrio(); });
-/* срок у поля новой задачи (виден в папке с режимом «Сроки») */
-const dueShort = s => s.slice(8) + '.' + s.slice(5, 7);
+/* срок у поля новой задачи (кнопка в строке описания; виден в папке с режимом «Сроки») */
 function renderComposerDue() {
-  const slot = $('#nDueSlot'), on = composerDue() && canWrite();
-  slot.hidden = !on; if (!on) return;
-  const v = newDueValue(), b = $('#nDue'), inp = $('#nDueIn');
-  inp.value = v || '';
+  const b = $('#nDue'), on = composerDue() && canWrite();
+  b.hidden = !on; if (!on) return;
+  const v = newDueValue();
   b.className = `c-due-btn${v ? ' set' : ''}`;
-  b.innerHTML = v ? `<span>${dueShort(v)}</span>` : icon('cal');
+  b.innerHTML = `${icon('cal')}<span>${v ? esc(dueLabel(v)) : 'Без срока'}</span>`;
   const txt = v ? `Срок: ${dueLabel(v)}` : 'Без срока';
-  b.setAttribute('aria-label', `Новая задача. ${txt}. Выбрать дату`);
-  b.title = `${txt} — нажмите, чтобы выбрать дату`;
+  b.setAttribute('aria-label', `${txt}. Выбрать срок`);
+  b.title = `${txt} — нажмите, чтобы выбрать`;
 }
-$('#nDue').addEventListener('click', () => { const i = $('#nDueIn'); try { i.showPicker(); } catch { i.focus(); i.click(); } });
-$('#nDueIn').addEventListener('change', e => { state.newDue = e.target.value || null; renderComposerDue(); $('#nTitle').focus(); });
+$('#nDue').addEventListener('click', e => {
+  openDuePicker(e.currentTarget, newDueValue(), v => { state.newDue = v; renderComposerDue(); $('#nTitle').focus(); });
+});
+// Срок не должен забирать фокус у описания (иначе оно свернётся под курсором).
+$('#nDue').addEventListener('mousedown', e => { if ($('#cBox').classList.contains('with-desc')) e.preventDefault(); });
 function transfer(taskId, toId) {
   if (toId === 'none') toId = null;
   const t = state.db.tasks.find(x => x.id === taskId);
@@ -326,7 +355,7 @@ function saveEdit(id, quiet = false) {
   }
   state.editing = null;
   const t = state.db.tasks.find(x => x.id === id);
-  const du = $(`#edu-${CSS.escape(id)}`), due = du ? du.value || null : undefined;
+  const du = $(`#edu-${CSS.escape(id)}`), due = du ? du.dataset.value || null : undefined;
   const patch = {};
   if (t && (t.title !== title || (t.desc || '') !== desc)) Object.assign(patch, { title, desc });
   if (t && du && (t.dueDate || null) !== due) patch.dueDate = due;
@@ -387,6 +416,11 @@ $('#list').addEventListener('click', e => {
   const ask = e.target.closest('[data-pr-ask]');
   if (ask) { const t = state.db.tasks.find(x => x.id === ask.dataset.prAsk); return t && askPrio(t.id, !t.important); }
   const cpq = e.target.closest('[data-cancel-prio]'); if (cpq) return ops.cancelPrio(cpq.dataset.cancelPrio).then(okk => okk && toast('Заявка отозвана'));
+  const rm = e.target.closest('[data-remind]'); if (rm) return remindTask(rm.dataset.remind, rm);
+  const dp1 = e.target.closest('[data-due-pick]');
+  if (dp1) return openDuePicker(dp1, dp1.dataset.value || null, v => setDuePick(dp1, v));
+  const de = e.target.closest('[data-due-edit]');
+  if (de) { const t = state.db.tasks.find(x => x.id === de.dataset.dueEdit); return t && openDuePicker(de, t.dueDate, v => setTaskDue(t.id, v)); }
   const ed = e.target.closest('[data-edit]'); if (ed) return startEdit(ed.dataset.edit);
   const del = e.target.closest('[data-del]'); if (del) return removeTask(del.dataset.del);
   const mv = e.target.closest('[data-move]'); if (mv) return openMove(mv.dataset.move);

@@ -9,6 +9,7 @@ function menuEntries() {
     isAdmin() && { page: 'users', html: `${icon('users')}<span class="am-txt"><b>Пользователи</b><span>${waiting ? `Заявки: ${waiting}` : 'Профили и доступ'}</span></span>${waiting ? `<span class="am-badge">${waiting}</span>` : ''}` },
     { page: 'groups', html: `${icon('grid')}<span class="am-txt"><b>Группы</b><span>${isAdmin() ? 'Создать, добавить людей' : 'Где вы состоите'}</span></span>` },
     { page: 'folders', html: `${icon('folder')}<span class="am-txt"><b>Мои папки</b><span>Создать, скрыть от других</span></span>` },
+    { page: 'push', html: `${icon('bell')}<span class="am-txt"><b>Пуш-уведомления</b><span>Включить, звук</span></span>` },
     { page: 'journal', html: `${icon('list')}<span class="am-txt"><b>Журнал</b><span>Кто что когда сделал</span></span>` },
     { page: 'archive', html: `${icon('trash')}<span class="am-txt"><b>Архив</b><span>Удалённое хранится ${ARCHIVE_DAYS} дней</span></span>${archiveCount() ? `<span class="am-n">${archiveCount()}</span>` : ''}` },
   ].filter(Boolean);
@@ -46,6 +47,7 @@ const PAGES = {
   groups:  { title: 'Группы', build: buildGroupsPage },
   folders: { title: 'Мои папки', build: buildFoldersPage },
   // Страницы из activity.js (подключается позже) — через обёртки.
+  push:    { title: 'Пуш-уведомления', build: () => buildPushPage(), open: () => pushRefresh().then(refreshNotesPush) },
   notes:   { title: 'Уведомления', build: () => buildNotesPage(), open: () => afterNotesOpen() },
   journal: { title: 'Журнал', build: () => buildJournalPage(), open: () => loadJournal() },
   archive: { title: 'Архив', build: () => buildArchivePage() },

@@ -12,6 +12,7 @@ self.addEventListener('push', e => {
     badge: 'icons/badge-96.png',
     tag: d.tag || undefined,          // уведомления об одной задаче заменяют друг друга
     renotify: !!d.tag,
+    vibrate: d.vibrate || undefined,   // напоминания — заметнее обычных
     data: { url: d.url || './', note: d.note || null },
     lang: 'ru',
   }));

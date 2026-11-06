@@ -65,7 +65,12 @@ function noteText(n) {
     }
   }
   switch (n.kind) {
-    case 'assigned': return `${a} назначил(а) вам задачу`;
+    case 'assigned':
+      if (d.remind) {
+        const over = d.due && dayDiff(d.due) < 0;
+        return `${a} напоминает: нужно выполнить задачу${d.due ? ` · срок ${dueLabel(d.due)}${over ? ' (просрочено)' : ''}` : ''}${d.shared_name ? ` · папка «${esc(d.shared_name)}»` : ''}`;
+      }
+      return `${a} назначил(а) вам задачу`;
     case 'status': return `${a}: статус → ${esc(statusOf(d.to).label)}${d.shared_name ? ` · общая папка ${quote(d.shared_name)}` : ''}`;
     case 'deleted': return `${a} удалил(а) вашу задачу`;
     case 'restored': return `${a} восстановил(а) вашу задачу`;
@@ -91,7 +96,7 @@ function buildNotesPage() {
       && [...state.db.transfers, ...state.db.ftransfers, ...state.db.prioReqs].some(x => x.id === n.transferId && x.status === 'pending');
     const open = n.taskId && state.db.tasks.some(t => t.id === n.taskId && !t.deletedAt);
     html += `<div class="ntf${!n.readAt || state.freshNotes?.has(n.id) ? ' new' : ''}">
-      <span class="ntf-ic">${icon(NOTE_ICONS[n.kind] || 'bell')}</span>
+      <span class="ntf-ic">${icon(n.data.remind ? 'bell' : NOTE_ICONS[n.kind] || 'bell')}</span>
       <div class="ntf-txt"><b>${noteText(n)}</b>
         ${n.title && !n.data.folder ? `<span class="ntf-t">${open ? `<button type="button" class="link" data-goto="${n.taskId}">${esc(n.title)}</button>` : esc(n.title)}</span>` : ''}
         <span class="hint">${fmtTime.format(n.createdAt)}${n.kind === 'purge_soon' ? ' · восстановить можно в «Архиве»' : ''}</span>
@@ -101,15 +106,14 @@ function buildNotesPage() {
   }
   const read = notes.some(n => n.readAt);
   $('#stBody').innerHTML = `<section class="st-sec" aria-label="Уведомления">
-    ${pushCardHtml()}
     ${notes.length ? `<div class="ntfs">${html}</div>` : `<div class="empty">${icon('bell')}<span>Уведомлений нет. Здесь появится, когда кто-то назначит вам задачу, сменит её статус или передаст задачу.</span></div>`}
     ${read ? `<button class="btn ghost sm" type="button" id="clearNotes">Убрать прочитанные</button>` : ''}
+    <button class="link" type="button" data-open-page="push">Настроить пуши и звук</button>
   </section>`;
 }
 // Открыли список — новые помечаются прочитанными (подсветка остаётся до закрытия окна).
 function afterNotesOpen() {
   if (unread()) ops.markRead().then(renderBell);
-  pushRefresh().then(refreshNotesPush);
 }
 
 async function answerTransfer(id, accept, btn) {
@@ -332,6 +336,7 @@ async function giveFolder(to) {
 
 /* ---------- обработчики страниц ---------- */
 $('#stBody').addEventListener('click', e => {
+  const op = e.target.closest('[data-open-page]'); if (op) return openPage(op.dataset.openPage);
   const go = e.target.closest('[data-goto]'); if (go) return gotoTask(go.dataset.goto);
   const yes = e.target.closest('[data-tr-yes]'); if (yes) return answerTransfer(yes.dataset.trYes, true, yes);
   const no = e.target.closest('[data-tr-no]'); if (no) return answerTransfer(no.dataset.trNo, false, no);
