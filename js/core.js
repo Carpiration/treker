@@ -39,6 +39,20 @@ function when(ts) {
   if (d < 6 * 3600000) return `${Math.floor(d / 3600000)} ч назад`;
   return fmt.format(ts).replace('.', '');
 }
+// Сроки задач: даты без времени, строкой «ГГГГ-ММ-ДД» по местному календарю.
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const todayYmd = () => ymd(new Date());
+const addDaysYmd = (s, n) => { const [y, m, d] = s.split('-').map(Number); return ymd(new Date(y, m - 1, d + n)); };
+const dayDiff = s => { const [y, m, d] = s.split('-').map(Number), [y0, m0, d0] = todayYmd().split('-').map(Number); return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(y0, m0 - 1, d0)) / 864e5); };
+const DEFAULT_DUE_DAYS = 7;
+const dueFmt = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short' });
+const dueFmtY = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
+function dueLabel(s) {
+  const n = dayDiff(s), [y, m, d] = s.split('-').map(Number), dt = new Date(y, m - 1, d);
+  if (n === 0) return 'сегодня';
+  if (n === 1) return 'завтра';
+  return (y === new Date().getFullYear() ? dueFmt : dueFmtY).format(dt).replace(/\.$/, '').replace(' г.', '');
+}
 function hue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 function avatar(u, cls = '') {
   if (!u) return `<span class="avatar ${cls}" aria-hidden="true">?</span>`;
@@ -76,7 +90,7 @@ function btnBusy(btn, busy, text) {
 let backend = null;
 const state = { db: { users: [], tasks: [], groups: [], members: [], folders: [], notes: [], transfers: [], ftransfers: [], fmembers: [], prioReqs: [] }, me: null,
   space: 'me', folder: 'all', who: 'all', newFolder: false, view: 'active',
-  editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: undefined, newImportant: null, newImages: [], pending: false, pfOpen: null, flash: null,
+  editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: undefined, newImportant: null, newDue: undefined, newImages: [], pending: false, pfOpen: null, flash: null,
   leaving: new Map() };  // задачи, улетающие в «Готовые»/«Активные»: id → куда
 const user = id => state.db.users.find(u => u.id === id);
 const me = () => user(state.me);

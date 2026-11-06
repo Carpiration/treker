@@ -15,6 +15,7 @@ function render(opts) {
   renderChips();
   renderComposerAssign();
   renderComposerPrio();
+  renderComposerDue();
   renderList(opts);
   if ($('#settings').open) refreshSettings();
 }
@@ -36,16 +37,21 @@ function taskHtml(t) {
   const assignMenu = !showA ? '' : rw ? menuHtml({ kind: 'assign', id: t.id, cls: 'av-btn', btn: a ? avatar(a) : noA,
     label: `Исполнитель: ${t.assigneeId === state.me ? 'вы' : a?.name || 'нет'}. Передать задачу`, items: sf ? assigneeItemsFolder(sf.id, t.assigneeId) : assigneeItems(t.groupId, t.assigneeId) })
     : `<span class="av-btn ro">${a ? avatar(a) : noA}</span>`;
+  const dueOn = taskDue(t) && !!t.dueDate, dn = dueOn ? dayDiff(t.dueDate) : 0, over = dueOn && t.status !== 'done' && dn < 0;
+  const dueCls = !dueOn ? '' : t.status === 'done' ? '' : dn < 0 ? ' over' : dn <= 1 ? ' soon' : '';
+  const dueTitle = !dueOn ? '' : over ? `Просрочено на ${-dn} дн (срок ${dueLabel(t.dueDate)})` : `Срок: ${dueLabel(t.dueDate)}`;
+  const dueChip = dueOn ? `<span class="t-due${dueCls}" title="${esc(dueTitle)}">${icon('cal')}<span>${esc(dueLabel(t.dueDate))}</span></span>` : '';
   const head = editing
     ? `<textarea class="t-title-input" id="et-${t.id}" rows="1" maxlength="200" autocomplete="off" aria-label="Название задачи" aria-describedby="et-${t.id}-err">${esc(t.title)}</textarea>`
     : `<button type="button" class="t-main" data-main="${t.id}" aria-expanded="${open}" aria-controls="tm-${t.id}"><span class="t-title">${esc(t.title)}</span>${
       t.desc ? `<span class="t-sub">${esc(t.desc.replace(/\s+/g, ' ').slice(0, 240))}</span>` : ''}${
-      view === 'hide' ? `<span class="sr-only">, ${s.label}</span>` : ''}</button>`;
+      view === 'hide' ? `<span class="sr-only">, ${s.label}</span>` : ''}${dueChip}</button>`;
   const meta = [
     showA ? (a ? `Исполнитель: ${esc(a.name)}` : 'без исполнителя') : '',
     !inGroup && t.folderId && folder(t.folderId) && (state.folder === 'all' || sf) ? `${sf ? 'общая папка' : 'папка'} «${esc(folder(t.folderId).name)}»` : '',
     `создал(а) ${esc(author?.name || '—')}, ${when(t.createdAt)}`,
     t.status === 'done' && t.doneAt ? `готово ${when(t.doneAt)}` : '',
+    dueOn ? `срок ${dueLabel(t.dueDate)}${over ? ' (просрочено)' : ''}` : '',
   ].filter(Boolean).join(' · ');
   const tr = pendingTransfer(t.id), pq = pendingPrio(t.id);
   const trNote = tr ? `<div class="t-wait">${icon('clock')}Ждёт согласия: ${esc(user(tr.toId)?.name || '—')}</div>`
@@ -55,6 +61,7 @@ function taskHtml(t) {
       <div class="field-error" id="et-${t.id}-err" hidden></div>
       <label class="sr-only" for="ed-${t.id}">Описание</label>
       <textarea class="t-desc-input" id="ed-${t.id}" maxlength="5000" placeholder="Описание: что именно, где, как проверить">${esc(t.desc)}</textarea>
+      ${taskDue(t) ? `<label class="t-due-edit">${icon('cal')}<span>Срок</span><input type="date" id="edu-${t.id}" value="${t.dueDate || ''}"></label>` : ''}
       ${imgsHtml(t, true)}
       <div class="t-actions">
         <button class="btn primary sm" type="submit">Сохранить</button>
@@ -105,7 +112,7 @@ function renderList({ flip = true } = {}) {
   const prev = new Map();
   if (animate) $$('[data-task]', list).forEach(el => prev.set(el.dataset.task, el.getBoundingClientRect().top));
   const ed = state.editing && $(`#et-${CSS.escape(state.editing)}`);
-  const draft = ed && { title: ed.value, desc: $(`#ed-${CSS.escape(state.editing)}`).value };
+  const draft = ed && { title: ed.value, desc: $(`#ed-${CSS.escape(state.editing)}`).value, due: $(`#edu-${CSS.escape(state.editing)}`)?.value };
   const fsel = focusSelector(), fa = document.activeElement;
   const sel = fa && 'selectionStart' in fa && fsel?.startsWith('#') ? [fa.selectionStart, fa.selectionEnd] : null;
 
@@ -129,7 +136,7 @@ function renderList({ flip = true } = {}) {
   }
 
   const et = state.editing && $(`#et-${CSS.escape(state.editing)}`);
-  if (draft && et) { et.value = draft.title; $(`#ed-${CSS.escape(state.editing)}`).value = draft.desc; }
+  if (draft && et) { et.value = draft.title; $(`#ed-${CSS.escape(state.editing)}`).value = draft.desc; const du = $(`#edu-${CSS.escape(state.editing)}`); if (du && draft.due != null) du.value = draft.due; }
   if (fsel) { const el = $(fsel, list); if (el) { el.focus({ preventScroll: true }); if (sel) try { el.setSelectionRange(...sel); } catch {} } }
 
   if (animate) {
@@ -204,10 +211,10 @@ $('#newForm').addEventListener('submit', e => {
   if (!canWrite()) return;
   const now = Date.now(), place = newTaskPlace(), id = newId();
   const task = { id, title, desc: $('#nDesc').value.trim(), status: 'todo', ...place, images: composerImages(id),
-    authorId: state.me, createdAt: now, updatedAt: now, doneAt: null };
+    authorId: state.me, createdAt: now, updatedAt: now, doneAt: null, dueDate: !place.groupId && composerDue() ? newDueValue() : null };
   // Поле очищаем сразу: повторный Enter создаст новую задачу, а не дубль этой.
   $('#nTitle').value = ''; $('#nDesc').value = ''; setDescOpen(false);
-  state.newAssignee = undefined; state.newImportant = null;
+  state.newAssignee = undefined; state.newImportant = null; state.newDue = undefined;
   // Показываем вкладку, куда попала новая задача.
   state.view = viewPrio() ? (task.important ? 'important' : 'later') : 'active';
   ops.addTasks([task]);
@@ -277,6 +284,21 @@ function renderComposerPrio() {
   b.title = `Новая задача — «${hi ? 'Важно' : 'Потом'}». Нажмите, чтобы переключить`;
 }
 $('#nPrio').addEventListener('click', () => { state.newImportant = !newImportant(); renderComposerPrio(); });
+/* срок у поля новой задачи (виден в папке с режимом «Сроки») */
+const dueShort = s => s.slice(8) + '.' + s.slice(5, 7);
+function renderComposerDue() {
+  const slot = $('#nDueSlot'), on = composerDue() && canWrite();
+  slot.hidden = !on; if (!on) return;
+  const v = newDueValue(), b = $('#nDue'), inp = $('#nDueIn');
+  inp.value = v || '';
+  b.className = `c-due-btn${v ? ' set' : ''}`;
+  b.innerHTML = v ? `<span>${dueShort(v)}</span>` : icon('cal');
+  const txt = v ? `Срок: ${dueLabel(v)}` : 'Без срока';
+  b.setAttribute('aria-label', `Новая задача. ${txt}. Выбрать дату`);
+  b.title = `${txt} — нажмите, чтобы выбрать дату`;
+}
+$('#nDue').addEventListener('click', () => { const i = $('#nDueIn'); try { i.showPicker(); } catch { i.focus(); i.click(); } });
+$('#nDueIn').addEventListener('change', e => { state.newDue = e.target.value || null; renderComposerDue(); $('#nTitle').focus(); });
 function transfer(taskId, toId) {
   if (toId === 'none') toId = null;
   const t = state.db.tasks.find(x => x.id === taskId);
@@ -304,7 +326,11 @@ function saveEdit(id, quiet = false) {
   }
   state.editing = null;
   const t = state.db.tasks.find(x => x.id === id);
-  if (t && (t.title !== title || (t.desc || '') !== desc)) ops.patchTask(id, { title, desc });
+  const du = $(`#edu-${CSS.escape(id)}`), due = du ? du.value || null : undefined;
+  const patch = {};
+  if (t && (t.title !== title || (t.desc || '') !== desc)) Object.assign(patch, { title, desc });
+  if (t && du && (t.dueDate || null) !== due) patch.dueDate = due;
+  if (t && Object.keys(patch).length) ops.patchTask(id, patch);
   else renderList({ flip: false });
   if (!quiet) $(`[data-main="${id}"]`)?.focus({ preventScroll: true });
   return true;

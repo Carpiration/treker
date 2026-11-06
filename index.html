@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-title" content="Задачи">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script src="config.js"></script>
-<link rel="stylesheet" href="css/app.css?v=20261106b">
+<link rel="stylesheet" href="css/app.css?v=20261106c">
 </head>
 <body>
 <script>
@@ -48,6 +48,7 @@ try { var L = JSON.parse(localStorage.getItem('treker-look') || 'null');
   <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></symbol>
   <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6z"/></symbol>
   <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17.5 4.8-4.8a1.5 1.5 0 0 1 2.1 0L16 17.8M14 15.5l1.6-1.6a1.5 1.5 0 0 1 2.1 0l2.8 2.8"/></symbol>
+  <symbol id="i-cal" viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14.5" rx="2.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></symbol>
   <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11.5l-2 4 2 4H5"/></symbol>
   <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
   <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
@@ -117,6 +118,7 @@ try { var L = JSON.parse(localStorage.getItem('treker-look') || 'null');
       </div>
       <div class="c-side">
         <div id="nAssignSlot" hidden></div>
+        <div class="c-due" id="nDueSlot" hidden><button type="button" class="c-due-btn" id="nDue"></button><input type="date" id="nDueIn" class="c-due-in" tabindex="-1" aria-hidden="true"></div>
         <button class="btn primary c-add" type="submit" id="nSubmit" aria-label="Добавить задачу" title="Добавить (Shift+Enter)" aria-keyshortcuts="Shift+Enter"><span class="c-add-tx" aria-hidden="true">Добавить</span></button>
       </div>
     </form>
@@ -156,18 +158,18 @@ try { var L = JSON.parse(localStorage.getItem('treker-look') || 'null');
 <div class="menu-list ctx" id="ctx" role="menu" aria-label="Действия с задачей" hidden></div>
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
-<script src="js/core.js?v=20261106b" defer></script>
-<script src="js/backend.js?v=20261106b" defer></script>
-<script src="js/spaces.js?v=20261106b" defer></script>
-<script src="js/auth.js?v=20261106b" defer></script>
-<script src="js/menu.js?v=20261106b" defer></script>
-<script src="js/list.js?v=20261106b" defer></script>
-<script src="js/images.js?v=20261106b" defer></script>
-<script src="js/look.js?v=20261106b" defer></script>
-<script src="js/settings.js?v=20261106b" defer></script>
-<script src="js/share.js?v=20261106b" defer></script>
-<script src="js/activity.js?v=20261106b" defer></script>
-<script src="js/push.js?v=20261106b" defer></script>
-<script src="js/main.js?v=20261106b" defer></script>
+<script src="js/core.js?v=20261106c" defer></script>
+<script src="js/backend.js?v=20261106c" defer></script>
+<script src="js/spaces.js?v=20261106c" defer></script>
+<script src="js/auth.js?v=20261106c" defer></script>
+<script src="js/menu.js?v=20261106c" defer></script>
+<script src="js/list.js?v=20261106c" defer></script>
+<script src="js/images.js?v=20261106c" defer></script>
+<script src="js/look.js?v=20261106c" defer></script>
+<script src="js/settings.js?v=20261106c" defer></script>
+<script src="js/share.js?v=20261106c" defer></script>
+<script src="js/activity.js?v=20261106c" defer></script>
+<script src="js/push.js?v=20261106c" defer></script>
+<script src="js/main.js?v=20261106c" defer></script>
 </body>
 </html>

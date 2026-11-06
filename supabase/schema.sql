@@ -1618,3 +1618,86 @@ grant execute on function public.set_folder_shared(uuid, boolean), public.add_fo
   public.request_prio(uuid, boolean), public.respond_prio(uuid, boolean), public.cancel_prio(uuid) to authenticated;
 revoke execute on function public.move_task(uuid, uuid, uuid, uuid), public.transfer_folder(uuid, uuid) from public, anon;
 grant execute on function public.move_task(uuid, uuid, uuid, uuid), public.transfer_folder(uuid, uuid) to authenticated;
+
+-- =====================================================================
+-- Сроки задач: режим «Сроки» включается у папки (как «Важно / Потом»), срок задаётся при создании (по умолчанию — неделя).
+alter table public.folders  add column if not exists due boolean not null default false;
+alter table public.profiles add column if not exists root_due boolean not null default false;
+alter table public.tasks    add column if not exists due_date date;
+grant insert (due), update (due) on public.folders to authenticated;
+grant update (root_due) on public.profiles to authenticated;
+grant insert (due_date), update (due_date) on public.tasks to authenticated;
+
+-- «Без папки», переданные целиком, переезжают в новую папку с теми же режимами.
+create or replace function public.transfer_root(p_to uuid) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  me uuid := auth.uid(); p public.profiles; base text; nm text; i int := 1; fid uuid;
+begin
+  select * into p from public.profiles where id = me;
+  if not found or not public.is_active() then raise exception 'Нет доступа'; end if;
+  if p_to = me or not exists (select 1 from public.profiles where id = p_to and active) then raise exception 'Человек не найден или отключён'; end if;
+  if not exists (select 1 from public.tasks where owner_id = me and group_id is null and folder_id is null and deleted_at is null) then
+    raise exception 'Здесь нет задач — передавать нечего';
+  end if;
+  base := coalesce(nullif(btrim(p.root_name), ''), 'Без папки'); nm := base;
+  while exists (select 1 from public.folders where owner_id = me and lower(name) = lower(nm)) loop
+    i := i + 1; nm := left(base, 34) || ' (' || i || ')';
+  end loop;
+  insert into public.folders (owner_id, name, hidden, prio, due, kind) values (me, nm, p.root_hidden, p.root_prio, p.root_due, 'user') returning id into fid;
+  perform set_config('treker.bulk', 'on', true);
+  update public.tasks set folder_id = fid, updated_at = now() where owner_id = me and group_id is null and folder_id is null and deleted_at is null;
+  perform set_config('treker.bulk', 'off', true);
+  return public.transfer_folder(fid, p_to);
+end $$;
+revoke execute on function public.transfer_root(uuid) from public, anon;
+grant execute on function public.transfer_root(uuid) to authenticated;
+
+-- Срок чужой задачи в общей папке меняют администратор и автор (как название и исполнителя).
+create or replace function public.shared_task_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  me uuid := auth.uid();
+  fo public.folders;
+  fn public.folders;
+begin
+  if new.folder_id is not null then select * into fn from public.folders where id = new.folder_id; end if;
+  if tg_op = 'INSERT' then
+    if fn.shared is true then
+      if new.owner_id is distinct from fn.owner_id then raise exception 'Задача общей папки принадлежит её администратору'; end if;
+      if me is not null then
+        if not public.folder_open(fn.id) then raise exception 'Вы не состоите в этой папке'; end if;
+        new.author_id := me;
+      end if;
+      if new.assignee_id is not null and new.assignee_id <> fn.owner_id
+         and not exists (select 1 from public.folder_members where folder_id = fn.id and user_id = new.assignee_id) then
+        raise exception 'Исполнитель не состоит в этой папке';
+      end if;
+    end if;
+    return new;
+  end if;
+  if old.folder_id is not null then select * into fo from public.folders where id = old.folder_id; end if;
+  if not (coalesce(fo.shared, false) or coalesce(fn.shared, false)) then return new; end if;
+  if fn.shared is true then
+    if new.owner_id is distinct from fn.owner_id then raise exception 'Задача общей папки принадлежит её администратору'; end if;
+    if new.assignee_id is distinct from old.assignee_id and new.assignee_id is not null and new.assignee_id <> fn.owner_id
+       and not exists (select 1 from public.folder_members where folder_id = fn.id and user_id = new.assignee_id) then
+      raise exception 'Исполнитель не состоит в этой папке';
+    end if;
+  end if;
+  if me is null or me = coalesce(fo.owner_id, fn.owner_id) then return new; end if;
+  if new.folder_id is distinct from old.folder_id or new.owner_id is distinct from old.owner_id or new.group_id is distinct from old.group_id then
+    raise exception 'Переносить задачу из общей папки может только администратор папки';
+  end if;
+  if me is distinct from old.author_id then
+    if new.important is distinct from old.important then
+      raise exception 'Важность чужой задачи меняется заявкой администратору папки';
+    end if;
+    if new.title is distinct from old.title or new.descr is distinct from old.descr or new.images is distinct from old.images
+       or new.assignee_id is distinct from old.assignee_id or new.deleted_at is distinct from old.deleted_at
+       or new.due_date is distinct from old.due_date then
+      raise exception 'Править задачу может только её автор или администратор папки';
+    end if;
+  end if;
+  return new;
+end $$;

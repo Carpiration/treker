@@ -97,6 +97,17 @@ function filterTasks(list, info = cur()) {
 const prioShown = () => !pref('prioOff');
 const folderPrio = (fid, ownerId) => fid ? !!folder(fid)?.prio : !!user(ownerId)?.rootPrio;
 const taskPrio = t => prioShown() && !t.groupId && folderPrio(t.folderId, t.ownerId);
+/* ---------- режим «Сроки» ----------
+   Включается у папки (или у «Без папки») владельцем, как «Важно / Потом». Срок ставит тот, кто создаёт задачу, — по умолчанию неделя. */
+const folderDue = (fid, ownerId) => fid ? !!folder(fid)?.due : !!user(ownerId)?.rootDue;
+const taskDue = t => !t.groupId && folderDue(t.folderId, t.ownerId);
+// Срок нового задания: выбранный в поле, иначе через неделю; null — без срока. В папке без режима срока нет.
+const composerDue = () => {
+  const info = cur(); if (info.kind === 'group') return false;
+  const sf = composerShared(); if (sf) return !!sf.due;
+  return state.folder === 'all' || state.folder === 'root' ? !!user(state.me)?.rootDue : !!folder(state.folder)?.due;
+};
+const newDueValue = () => state.newDue === undefined ? addDaysYmd(todayYmd(), DEFAULT_DUE_DAYS) : state.newDue;
 // Открыта папка с режимом — переключатель «Важные · Потом · Готовые» вместо «Активные · Готовые».
 function viewPrio(info = cur()) {
   if (!prioShown() || info.kind === 'group' || state.folder === 'all') return false;

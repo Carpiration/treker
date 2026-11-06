@@ -207,7 +207,7 @@ function openFolderCtx(fid, x, y, byKey = false) {
   if (fid === 'root') {
     const hid = me().rootHidden, n = state.db.tasks.filter(t => !t.groupId && t.ownerId === state.me && !t.folderId && !t.deletedAt).length;
     html = labelHtml(rootName()) + it('rename', `${icon('edit')}Переименовать`)
-      + it('hide', `${icon(hid ? 'eye' : 'eye-off')}${hid ? 'Показать другим' : 'Скрыть от других'}`) + prioItem(!!me().rootPrio)
+      + it('hide', `${icon(hid ? 'eye' : 'eye-off')}${hid ? 'Показать другим' : 'Скрыть от других'}`) + prioItem(!!me().rootPrio) + dueItem(!!me().rootDue)
       + (n ? it('give', `${icon('move')}Передать целиком…`) : '');
   } else {
     const f = folder(fid); if (!f) return;
@@ -217,7 +217,7 @@ function openFolderCtx(fid, x, y, byKey = false) {
     html = labelHtml(f.name)
       + (f.kind === 'transfers' ? '' : it('rename', `${icon('edit')}Переименовать`))
       + (f.shared ? '' : it('hide', `${icon(f.hidden ? 'eye' : 'eye-off')}${f.hidden ? 'Показать другим' : 'Скрыть от других'}`))
-      + prioItem(!!f.prio)
+      + prioItem(!!f.prio) + dueItem(!!f.due)
       + (f.kind === 'transfers' ? '' : it('share', `${icon('users')}${f.shared ? 'Участники и доступ…' : 'Сделать общей…'}`))
       + (canMoveFolder(fid, -1) ? it('up', `${icon('up')}Выше`) : '') + (canMoveFolder(fid, 1) ? it('down', `${icon('down')}Ниже`) : '')
       + (f.shared ? '' : ft ? it('cancel-ft', `${icon('x')}Отменить передачу (${esc(user(ft.toId)?.name || '—')})`) : it('give', `${icon('move')}Передать папку целиком…`))
@@ -227,6 +227,11 @@ function openFolderCtx(fid, x, y, byKey = false) {
 }
 // Режим «Важно / Потом» у папки: переключатель с галочкой.
 const prioItem = on => `<button type="button" class="menu-item" role="menuitemcheckbox" aria-checked="${on}" data-ctx="prio">${icon('flag')}Режим «Важно / Потом»${on ? `<span class="ck">${icon('check')}</span>` : ''}</button>`;
+const dueItem = on => `<button type="button" class="menu-item" role="menuitemcheckbox" aria-checked="${on}" data-ctx="due">${icon('cal')}Сроки задач${on ? `<span class="ck">${icon('check')}</span>` : ''}</button>`;
+function toggleFolderDue(fid) {
+  const f = fid === 'root' ? null : folder(fid), on = !(f ? f.due : me().rootDue), name = `«${f ? f.name : rootName()}»`;
+  ops.setFolderDue(f ? fid : null, on).then(okk => okk && toast(on ? `${name}: у новых задач есть срок (по умолчанию — неделя)` : `${name}: сроки выключены`));
+}
 function toggleFolderPrio(fid) {
   const f = fid === 'root' ? null : folder(fid), on = !(f ? f.prio : me().rootPrio), name = `«${f ? f.name : rootName()}»`;
   const done = okk => okk && toast(on ? (prioShown() ? `${name}: задачи делятся на «Важно» и «Потом»` : `${name}: режим включён, но у вас он скрыт во «Внешнем виде»`)
@@ -253,6 +258,7 @@ function folderAction(fid, act, b) {
   if (act === 'del-no') return;
   if (act === 'del-yes') return deleteFolder(fid);
   if (act === 'prio') return toggleFolderPrio(fid);
+  if (act === 'due') return toggleFolderDue(fid);
   if (act === 'up' || act === 'down') return moveFolder(fid, act === 'up' ? -1 : 1);
   if (act === 'hide') {
     if (fid === 'root') return ops.patchSelf({ rootHidden: !me().rootHidden }).then(okk => okk && toast(me().rootHidden ? `«${rootName()}» скрыты от других` : `«${rootName()}» видны другим`));

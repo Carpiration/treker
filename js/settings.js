@@ -327,6 +327,7 @@ function buildFoldersPage() {
       <form class="f-name" data-f-rename="root" novalidate><label class="sr-only" for="f-root-name">Название для задач без папки</label>
         <input class="input" id="f-root-name" value="${esc(rootName(u))}" maxlength="40" autocomplete="off" placeholder="Без папки"></form>
       <button type="button" class="icon-btn prio-tg${u.rootPrio ? ' on' : ''}" data-f-prio="root" aria-pressed="${!!u.rootPrio}" aria-label="Режим «Важно / Потом»" title="Режим «Важно / Потом»: ${u.rootPrio ? 'включён' : 'выключен'}">${icon('flag')}</button>
+      <button type="button" class="icon-btn prio-tg${u.rootDue ? ' on' : ''}" data-f-due="root" aria-pressed="${!!u.rootDue}" aria-label="Сроки задач" title="Сроки задач: ${u.rootDue ? 'включены' : 'выключены'}">${icon('cal')}</button>
       <label class="eye-tg" title="${u.rootHidden ? 'Скрыты от других' : 'Видны другим'}"><input type="checkbox" class="sr-only" data-f-hide="root"${u.rootHidden ? '' : ' checked'}>
         ${icon(u.rootHidden ? 'eye-off' : 'eye')}<span class="sr-only">Видны другим</span></label>
       <span class="f-del-gap" aria-hidden="true"></span>
@@ -341,6 +342,7 @@ function buildFoldersPage() {
       <form class="f-name" data-f-rename="${f.id}" novalidate><label class="sr-only" for="f-${f.id}-name">Название папки</label>
         <input class="input" id="f-${f.id}-name" value="${esc(f.name)}" maxlength="40" autocomplete="off"${f.kind === 'transfers' ? ' readonly title="Служебная папка: сюда приходят переданные вам задачи"' : ''}></form>
       <button type="button" class="icon-btn prio-tg${f.prio ? ' on' : ''}" data-f-prio="${f.id}" aria-pressed="${!!f.prio}" aria-label="Режим «Важно / Потом»" title="Режим «Важно / Потом»: ${f.prio ? 'включён' : 'выключен'}">${icon('flag')}</button>
+      <button type="button" class="icon-btn prio-tg${f.due ? ' on' : ''}" data-f-due="${f.id}" aria-pressed="${!!f.due}" aria-label="Сроки задач" title="Сроки задач: ${f.due ? 'включены' : 'выключены'}">${icon('cal')}</button>
       ${f.shared ? '<span class="f-del-gap" aria-hidden="true"></span>' : `<label class="eye-tg" title="${f.hidden ? 'Скрыта от других' : 'Видна другим'}"><input type="checkbox" class="sr-only" data-f-hide="${f.id}"${f.hidden ? '' : ' checked'}>
         ${icon(f.hidden ? 'eye-off' : 'eye')}<span class="sr-only">Видна другим</span></label>`}
       ${f.kind === 'transfers' ? '' : state.confirmDel === f.id
@@ -353,7 +355,7 @@ function buildFoldersPage() {
     ${joined.length ? `<h3 class="st-sub">Общие папки, где вы участник</h3><div class="f-list">${joined.map(f => `<div class="f-row" data-f="${f.id}">
       <span class="f-ord" aria-hidden="true"></span>${shareBtn(f)}
       <span class="f-name f-ro"><span class="nm">${esc(f.name)}</span><span class="hint">администратор: ${esc(nick(f.ownerId))}</span></span></div>`).join('')}</div>` : ''}
-    <p class="hint">Первая строка — задачи без папки: её можно переименовать, скрыть, включить режим и передать целиком (в меню папки).</p>
+    <p class="hint">Первая строка — задачи без папки: её можно переименовать, скрыть, включить режим и передать целиком (в меню папки). Флажок — «Важно / Потом», календарь — сроки задач.</p>
     <form class="inline" id="folderNew" novalidate>
       ${fieldHtml('fNewName', 'Новая папка', 'maxlength="40" autocomplete="off" placeholder="Например, Дом"')}
       <button class="btn" type="submit">${icon('plus')}Создать</button></form>
@@ -471,6 +473,7 @@ $('#stBody').addEventListener('click', e => {
   if (fm) { const [d, id] = fm.dataset.fMv.split(':'); moveFolder(id, +d).then(() => { buildSettings(); $(`[data-f-mv="${d}:${id}"]:not([disabled])`)?.focus(); }); return; }
   const fsh = e.target.closest('[data-f-share]'); if (fsh) return openShare(fsh.dataset.fShare);
   const fp = e.target.closest('[data-f-prio]'); if (fp) return toggleFolderPrio(fp.dataset.fPrio);
+  const fdu = e.target.closest('[data-f-due]'); if (fdu) return toggleFolderDue(fdu.dataset.fDue);
   const fd = e.target.closest('[data-f-del]');
   if (fd) {
     const id = fd.dataset.fDel;

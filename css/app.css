@@ -744,3 +744,21 @@ button.f-share.on{color:var(--accent)}
 .sh-rules li{margin:3px 0}
 .t-pr.ask{cursor:pointer;outline:1px dashed color-mix(in srgb,var(--pr) 55%,transparent);outline-offset:-3px}
 .t-pr.wait{opacity:.6}
+
+/* ---------- сроки задач ---------- */
+.c-due{width:100%}
+.c-due[hidden]{display:none}
+.c-due{position:relative}
+.c-due-btn{display:flex;align-items:center;justify-content:center;width:100%;height:30px;padding:0;border:1px solid var(--border-strong);border-radius:var(--r-sm);background:var(--surface);color:var(--faint);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;cursor:pointer;transition:background-color var(--t-fast),border-color var(--t-fast),color var(--t-fast)}
+.c-due-btn .i{width:16px;height:16px}
+.c-due-btn.set{color:var(--text)}
+.c-due-btn:hover,.c-due-btn:focus-visible{border-color:var(--border-hover);background:var(--surface-2)}
+.c-due-in{position:absolute;left:0;bottom:0;width:100%;height:1px;opacity:0;pointer-events:none;border:0;padding:0}
+.t-due{display:inline-flex;align-items:center;gap:4px;margin:3px 0 0 8px;padding:1px 7px 1px 5px;border-radius:999px;background:var(--surface-2);color:var(--faint);font-size:12px;font-weight:500;line-height:1.5;white-space:nowrap;vertical-align:top}
+.t-due .i{width:13px;height:13px;flex:none}
+.t-due.soon{background:color-mix(in srgb,#e8a317 18%,transparent);color:#f0b84a}
+.t-due.over{background:color-mix(in srgb,#d93025 15%,transparent);color:#ff8a80;font-weight:600}
+.task.done .t-due{opacity:.7}
+.t-due-edit{display:flex;align-items:center;gap:8px;margin:8px 0 2px;color:var(--faint);font-size:13px}
+.t-due-edit .i{width:16px;height:16px}
+.t-due-edit input{min-height:36px;padding:4px 8px;border:1px solid var(--border-strong);border-radius:var(--r-sm);background:var(--surface);color:var(--text);font:inherit}
