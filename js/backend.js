@@ -34,7 +34,7 @@ function cloudBackend() {
     prefs: r.prefs || {}, rootHidden: !!r.root_hidden, rootPrio: !!r.root_prio, rootName: r.root_name || null, avatar: r.avatar || null });
   const toGroup = r => ({ id: r.id, name: r.name, createdAt: Date.parse(r.created_at) });
   const toMember = r => ({ groupId: r.group_id, userId: r.user_id });
-  const toFolder = r => ({ id: r.id, ownerId: r.owner_id, name: r.name, hidden: r.hidden, kind: r.kind, prio: !!r.prio, sort: r.sort || 0, createdAt: Date.parse(r.created_at) });
+  const toFolder = r => ({ id: r.id, ownerId: r.owner_id, name: r.name, hidden: r.hidden, kind: r.kind, prio: !!r.prio, shared: !!r.shared, sort: r.sort || 0, createdAt: Date.parse(r.created_at) });
   // Строка таблицы по ключу: { id } или составной ключ участника группы.
   const match = (q, key) => { for (const [k, v] of Object.entries(key)) q = q.eq(k, v); return q; };
   let uid = null, chan = null;
@@ -71,9 +71,16 @@ function cloudBackend() {
         sb.from('task_transfers').select('*').eq('status', 'pending'),
         sb.from('folder_transfers').select('*').eq('status', 'pending'),
       ]);
+      // Общие папки: участники и заявки на важность (если таблиц ещё нет — просто пусто).
+      const [fm, pr] = await Promise.all([
+        sb.from('folder_members').select('*'),
+        sb.from('prio_requests').select('*').eq('status', 'pending'),
+      ]);
       state.db = { users: ok(u).map(toUser), tasks: ok(t).map(toTask), groups: ok(g).map(toGroup), members: ok(m).map(toMember),
         folders: ok(f).map(toFolder), notes: ok(n).map(toNote), transfers: ok(tr).map(toTransfer),
-        ftransfers: ok(ft).map(r => ({ id: r.id, folderId: r.folder_id, fromId: r.from_id, toId: r.to_id, name: r.name, status: r.status })) };
+        ftransfers: ok(ft).map(r => ({ id: r.id, folderId: r.folder_id, fromId: r.from_id, toId: r.to_id, name: r.name, status: r.status })),
+        fmembers: (fm.error ? [] : fm.data).map(r => ({ folderId: r.folder_id, userId: r.user_id })),
+        prioReqs: (pr.error ? [] : pr.data).map(r => ({ id: r.id, taskId: r.task_id, folderId: r.folder_id, requesterId: r.requester_id, want: r.want, status: r.status })) };
     },
     // Общие операции: таблица, объект с полями приложения, ключ строки (в колонках базы).
     async insert(table, list) { ok(await sb.from(table).insert([].concat(list).map(o => toRow(table, o)))); },
@@ -150,6 +157,8 @@ function cloudBackend() {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, cb)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'task_transfers' }, cb)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'folder_transfers' }, cb)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'folder_members' }, cb)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'prio_requests' }, cb)
         .subscribe();
     },
     unsubscribe() { if (chan) { sb.removeChannel(chan); chan = null; } },
@@ -231,6 +240,17 @@ const ops = {
     if (fid) db.folders.find(f => f.id === fid).prio = on; else db.users.find(u => u.id === state.me).rootPrio = on;
     if (on) for (const t of db.tasks) if (!t.groupId && t.ownerId === state.me && (t.folderId || null) === fid && !t.deletedAt) t.important = true;
   }, () => backend.rpc('set_folder_prio', { p_folder: fid, p_on: on })),
+  // Общие папки. Всё идёт функциями базы: права на сервере, здесь — мгновенное отображение.
+  setFolderShared: (fid, on) => commit(db => { const f = db.folders.find(x => x.id === fid); if (f) { f.shared = on; if (on) f.hidden = false; else { f.hidden = true; db.fmembers = db.fmembers.filter(m => m.folderId !== fid); } } },
+    async () => { await backend.rpc('set_folder_shared', { p_folder: fid, p_on: on }); await backend.reload(); }),
+  addFolderMember: (fid, uid) => commit(db => db.fmembers.push({ folderId: fid, userId: uid }),
+    async () => { await backend.rpc('add_folder_member', { p_folder: fid, p_user: uid }); await backend.reload(); }),
+  removeFolderMember: (fid, uid) => commit(db => { db.fmembers = db.fmembers.filter(m => !(m.folderId === fid && m.userId === uid)); },
+    async () => { await backend.rpc('remove_folder_member', { p_folder: fid, p_user: uid }); await backend.reload(); }),
+  requestPrio: (taskId, want) => commit(db => db.prioReqs.push({ id: newId(), taskId, folderId: db.tasks.find(t => t.id === taskId)?.folderId, requesterId: state.me, want, status: 'pending' }),
+    async () => { await backend.rpc('request_prio', { p_task: taskId, p_important: want }); await backend.reload(); }),
+  cancelPrio: id => commit(db => { db.prioReqs = db.prioReqs.filter(r => r.id !== id); },
+    async () => { await backend.rpc('cancel_prio', { p_request: id }); await backend.reload(); }),
   removeFolder: id => commit(db => { db.folders = db.folders.filter(f => f.id !== id); for (const t of db.tasks) if (t.folderId === id) t.folderId = null; },
     () => backend.remove('folders', { id })),
 };

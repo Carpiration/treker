@@ -1199,3 +1199,422 @@ update public.folders f set sort = r.rn * 10
 from (select id, row_number() over (partition by owner_id order by lower(name)) rn from public.folders) r
 where r.id = f.id and f.sort = 0;
 grant insert (sort), update (sort) on public.folders to authenticated;
+
+-- =====================================================================
+-- Общие папки: одна папка, у которой есть администратор (создатель) и участники.
+-- Задачи хранятся один раз (owner_id = администратор папки) и видны всем участникам.
+--   * статус меняет любой участник — уведомление получают исполнитель, автор и администратор;
+--   * название, описание, фото, важность, исполнителя и удаление — администратор и автор своей задачи;
+--   * важность чужой задачи участник меняет заявкой — администратор принимает или отклоняет в колоколе.
+-- Виды уведомлений не расширяем: заявки и добавления идут теми же видами с признаками в data (prio, shared).
+-- =====================================================================
+alter table public.folders add column if not exists shared boolean not null default false;
+
+create table if not exists public.folder_members (
+  folder_id uuid not null references public.folders (id) on delete cascade,
+  user_id   uuid not null references public.profiles (id) on delete cascade,
+  added_at  timestamptz not null default now(),
+  primary key (folder_id, user_id)
+);
+create index if not exists folder_members_user_idx on public.folder_members (user_id);
+
+create table if not exists public.prio_requests (
+  id           uuid primary key default gen_random_uuid(),
+  task_id      uuid not null references public.tasks (id) on delete cascade,
+  folder_id    uuid references public.folders (id) on delete cascade,
+  requester_id uuid not null references public.profiles (id) on delete cascade,
+  want         boolean not null,
+  status       text not null default 'pending' check (status in ('pending', 'accepted', 'declined', 'cancelled')),
+  created_at   timestamptz not null default now(),
+  decided_at   timestamptz
+);
+create unique index if not exists prio_requests_one_pending on public.prio_requests (task_id) where status = 'pending';
+create index if not exists prio_requests_folder_idx on public.prio_requests (folder_id);
+
+-- Администратор общей папки или её участник.
+create or replace function public.folder_open(f uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_active() and exists (
+    select 1 from public.folders x
+    where x.id = f and x.shared and (x.owner_id = auth.uid()
+      or exists (select 1 from public.folder_members m where m.folder_id = x.id and m.user_id = auth.uid())))
+$$;
+
+create or replace function public.task_visible(g uuid, o uuid, f uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select case
+    when not public.is_active() then false
+    when g is not null then public.is_admin() or public.is_group_member(g)
+    when o = auth.uid() then true
+    when f is null then not coalesce((select root_hidden from public.profiles where id = o), true)
+    when coalesce((select shared from public.folders where id = f), false) then public.folder_open(f)
+    else not coalesce((select hidden from public.folders where id = f), true)
+  end
+$$;
+
+create or replace function public.task_can_write(g uuid, o uuid, f uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.task_editable(g, o)
+    or (g is null and f is not null and public.folder_open(f) and o = (select owner_id from public.folders where id = f))
+$$;
+revoke execute on function public.folder_open(uuid), public.task_can_write(uuid, uuid, uuid) from public, anon;
+grant execute on function public.folder_open(uuid), public.task_can_write(uuid, uuid, uuid) to authenticated;
+
+alter policy "folders: чтение" on public.folders
+  using (owner_id = (select auth.uid()) or (public.is_active() and ((not hidden and not shared) or public.folder_open(id))));
+alter policy "tasks: создание" on public.tasks with check (public.task_can_write(group_id, owner_id, folder_id));
+alter policy "tasks: изменение" on public.tasks
+  using (deleted_at is null and public.task_can_write(group_id, owner_id, folder_id))
+  with check (public.task_can_write(group_id, owner_id, folder_id));
+
+alter table public.folder_members enable row level security;
+alter table public.prio_requests  enable row level security;
+revoke all on public.folder_members, public.prio_requests from anon, authenticated;
+grant select on public.folder_members, public.prio_requests to authenticated;
+do $$ begin
+  create policy "folder_members: чтение" on public.folder_members for select to authenticated using (public.folder_open(folder_id));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "prio_requests: участники" on public.prio_requests for select to authenticated
+    using (requester_id = (select auth.uid()) or exists (select 1 from public.folders f where f.id = folder_id and f.owner_id = (select auth.uid())));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  begin alter publication supabase_realtime add table public.folder_members; exception when duplicate_object then null; end;
+  begin alter publication supabase_realtime add table public.prio_requests;  exception when duplicate_object then null; end;
+end $$;
+
+-- Исполнитель личной задачи — владелец; в общей папке — администратор или участник (проверяет shared_task_guard).
+create or replace function public.check_task_space() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.group_id is null then
+    if not (new.folder_id is not null and exists (select 1 from public.folders where id = new.folder_id and shared)) then
+      new.assignee_id := new.owner_id;
+    end if;
+    if new.folder_id is not null and not exists (select 1 from public.folders where id = new.folder_id and owner_id = new.owner_id) then
+      raise exception 'Папка принадлежит другому человеку';
+    end if;
+  elsif new.assignee_id is not null
+    and not exists (select 1 from public.group_members where group_id = new.group_id and user_id = new.assignee_id) then
+    raise exception 'Исполнитель не состоит в этой группе';
+  end if;
+  return new;
+end $$;
+
+-- Права внутри общей папки (колонки по ролям не разделить — проверяем в триггере).
+create or replace function public.shared_task_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  me uuid := auth.uid();
+  fo public.folders;
+  fn public.folders;
+begin
+  if new.folder_id is not null then select * into fn from public.folders where id = new.folder_id; end if;
+  if tg_op = 'INSERT' then
+    if fn.shared is true then
+      if new.owner_id is distinct from fn.owner_id then raise exception 'Задача общей папки принадлежит её администратору'; end if;
+      if me is not null then
+        if not public.folder_open(fn.id) then raise exception 'Вы не состоите в этой папке'; end if;
+        new.author_id := me;
+      end if;
+      if new.assignee_id is not null and new.assignee_id <> fn.owner_id
+         and not exists (select 1 from public.folder_members where folder_id = fn.id and user_id = new.assignee_id) then
+        raise exception 'Исполнитель не состоит в этой папке';
+      end if;
+    end if;
+    return new;
+  end if;
+  if old.folder_id is not null then select * into fo from public.folders where id = old.folder_id; end if;
+  if not (coalesce(fo.shared, false) or coalesce(fn.shared, false)) then return new; end if;
+  if fn.shared is true then
+    if new.owner_id is distinct from fn.owner_id then raise exception 'Задача общей папки принадлежит её администратору'; end if;
+    if new.assignee_id is distinct from old.assignee_id and new.assignee_id is not null and new.assignee_id <> fn.owner_id
+       and not exists (select 1 from public.folder_members where folder_id = fn.id and user_id = new.assignee_id) then
+      raise exception 'Исполнитель не состоит в этой папке';
+    end if;
+  end if;
+  if me is null or me = coalesce(fo.owner_id, fn.owner_id) then return new; end if;
+  if new.folder_id is distinct from old.folder_id or new.owner_id is distinct from old.owner_id or new.group_id is distinct from old.group_id then
+    raise exception 'Переносить задачу из общей папки может только администратор папки';
+  end if;
+  if me is distinct from old.author_id then
+    if new.important is distinct from old.important then
+      raise exception 'Важность чужой задачи меняется заявкой администратору папки';
+    end if;
+    if new.title is distinct from old.title or new.descr is distinct from old.descr or new.images is distinct from old.images
+       or new.assignee_id is distinct from old.assignee_id or new.deleted_at is distinct from old.deleted_at then
+      raise exception 'Править задачу может только её автор или администратор папки';
+    end if;
+  end if;
+  return new;
+end $$;
+create or replace trigger shared_task_guard before insert or update on public.tasks
+  for each row execute function public.shared_task_guard();
+revoke execute on function public.shared_task_guard(), public.check_task_space() from public, anon, authenticated;
+
+-- Журнал и уведомления: смену статуса в общей папке получают исполнитель, автор и администратор папки.
+create or replace function public.task_log() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  actor uuid := coalesce(auth.uid(), new.deleted_by, new.author_id);
+  sf text;
+begin
+  if tg_op = 'INSERT' then
+    perform public.log_event(new, 'created', jsonb_build_object('assignee', new.assignee_id), actor);
+    perform public.notify(new.assignee_id, 'assigned', new.id, new.title, actor);
+    return new;
+  end if;
+  if new.deleted_at is distinct from old.deleted_at then
+    if new.deleted_at is not null then
+      perform public.log_event(new, 'deleted', '{}'::jsonb, actor);
+      perform public.notify(new.assignee_id, 'deleted', new.id, new.title, actor);
+    else
+      perform public.log_event(new, 'restored', '{}'::jsonb, actor);
+      perform public.notify(new.assignee_id, 'restored', new.id, new.title, actor);
+    end if;
+    return new;
+  end if;
+  if new.group_id is distinct from old.group_id or new.owner_id is distinct from old.owner_id or new.folder_id is distinct from old.folder_id then
+    perform public.log_event(new, 'moved', jsonb_build_object(
+      'from_group', old.group_id, 'to_group', new.group_id, 'from_owner', old.owner_id, 'to_owner', new.owner_id,
+      'from_folder', old.folder_id, 'to_folder', new.folder_id), actor);
+    if new.assignee_id is not distinct from old.assignee_id then
+      perform public.notify(new.assignee_id, 'moved', new.id, new.title, actor, jsonb_build_object('to_group', new.group_id, 'to_folder', new.folder_id));
+    end if;
+  end if;
+  if new.assignee_id is distinct from old.assignee_id then
+    if new.owner_id is not distinct from old.owner_id then
+      perform public.log_event(new, 'assigned', jsonb_build_object('from', old.assignee_id, 'to', new.assignee_id), actor);
+    end if;
+    perform public.notify(new.assignee_id,
+      case when new.owner_id is distinct from old.owner_id then 'moved' else 'assigned' end,
+      new.id, new.title, actor, jsonb_build_object('to_group', new.group_id, 'to_folder', new.folder_id));
+  end if;
+  if new.status is distinct from old.status then
+    perform public.log_event(new, 'status', jsonb_build_object('from', old.status, 'to', new.status), actor);
+    select name into sf from public.folders where id = new.folder_id and shared;
+    perform public.notify(new.assignee_id, 'status', new.id, new.title, actor,
+      jsonb_build_object('from', old.status, 'to', new.status) || case when sf is null then '{}'::jsonb else jsonb_build_object('shared_name', sf) end);
+    if sf is not null then
+      if new.owner_id is distinct from new.assignee_id then
+        perform public.notify(new.owner_id, 'status', new.id, new.title, actor,
+          jsonb_build_object('from', old.status, 'to', new.status, 'shared_name', sf));
+      end if;
+      if new.author_id is distinct from new.assignee_id and new.author_id is distinct from new.owner_id then
+        perform public.notify(new.author_id, 'status', new.id, new.title, actor,
+          jsonb_build_object('from', old.status, 'to', new.status, 'shared_name', sf));
+      end if;
+    end if;
+  end if;
+  if new.title is distinct from old.title or new.descr is distinct from old.descr then
+    perform public.log_event(new, 'edited', case when new.title is distinct from old.title
+      then jsonb_build_object('old_title', old.title) else '{}'::jsonb end, actor);
+  end if;
+  if new.important is distinct from old.important and coalesce(current_setting('treker.bulk', true), '') <> 'on' then
+    perform public.log_event(new, 'edited', jsonb_build_object('important', new.important), actor);
+  end if;
+  if new.images is distinct from old.images then
+    perform public.log_event(new, 'edited', jsonb_build_object('images', cardinality(new.images)), actor);
+  end if;
+  return new;
+end $$;
+
+create or replace function public.move_task(p_task uuid, p_group uuid default null, p_owner uuid default null, p_folder uuid default null)
+returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  me  uuid := auth.uid();
+  t   public.tasks;
+  tgt public.profiles;
+  f   uuid := p_folder;
+  a   uuid;
+begin
+  select * into t from public.tasks where id = p_task for update;
+  if not found or t.deleted_at is not null or not public.task_visible(t.group_id, t.owner_id, t.folder_id)
+     or not public.task_editable(t.group_id, t.owner_id) then
+    raise exception 'Эту задачу нельзя перенести';
+  end if;
+  if exists (select 1 from public.task_transfers where task_id = p_task and status = 'pending') then
+    raise exception 'Задача уже ждёт согласия на передачу';
+  end if;
+  if (p_group is null) = (p_owner is null) then raise exception 'Не выбрано, куда перенести'; end if;
+
+  if p_group is not null then
+    if not (public.is_admin() or public.is_group_member(p_group)) then raise exception 'Вы не состоите в этой группе'; end if;
+    a := case
+      when exists (select 1 from public.group_members where group_id = p_group and user_id = t.assignee_id) then t.assignee_id
+      when exists (select 1 from public.group_members where group_id = p_group and user_id = me) then me end;
+    update public.tasks set group_id = p_group, owner_id = null, folder_id = null, assignee_id = a, updated_at = now() where id = p_task;
+    return 'moved';
+  end if;
+
+  select * into tgt from public.profiles where id = p_owner;
+  if not found or not tgt.active then raise exception 'Человек не найден или отключён'; end if;
+  if f is not null and not exists (select 1 from public.folders where id = f and owner_id = p_owner and ((not hidden and not shared) or owner_id = me)) then
+    raise exception 'Папка не найдена';
+  end if;
+  if p_owner = me then
+    update public.tasks set group_id = null, owner_id = me, folder_id = f, updated_at = now() where id = p_task;
+    return 'moved';
+  end if;
+  if tgt.role = 'admin' then
+    insert into public.task_transfers (task_id, from_id, to_id, folder_id) values (p_task, me, p_owner, f)
+      returning id into a;
+    perform public.log_event(t, 'transfer_requested', jsonb_build_object('to', p_owner, 'folder', f), me);
+    perform public.notify(p_owner, 'transfer_request', p_task, t.title, me, jsonb_build_object('folder', f), a);
+    return 'requested';
+  end if;
+  update public.tasks set group_id = null, owner_id = p_owner, folder_id = coalesce(f, public.transfers_folder(p_owner)), updated_at = now()
+    where id = p_task;
+  return 'moved';
+end $$;
+
+create or replace function public.transfer_folder(p_folder uuid, p_to uuid) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  me   uuid := auth.uid();
+  f    public.folders;
+  tgt  public.profiles;
+  v_id uuid;
+  n    int;
+begin
+  select * into f from public.folders where id = p_folder for update;
+  if not found or f.owner_id <> me or not public.is_active() then raise exception 'Папка не найдена'; end if;
+  if f.shared then raise exception 'Общую папку нельзя передать: у неё есть администратор и участники'; end if;
+  select * into tgt from public.profiles where id = p_to;
+  if not found or not tgt.active or p_to = me then raise exception 'Человек не найден или отключён'; end if;
+  if exists (select 1 from public.folder_transfers where folder_id = p_folder and status = 'pending') then
+    raise exception 'Папка уже ждёт согласия на передачу';
+  end if;
+  if exists (select 1 from public.task_transfers tt join public.tasks t on t.id = tt.task_id where t.folder_id = p_folder and tt.status = 'pending') then
+    raise exception 'В папке есть задачи, которые ждут согласия на передачу';
+  end if;
+  if tgt.role = 'admin' then
+    insert into public.folder_transfers (folder_id, from_id, to_id, name) values (p_folder, me, p_to, f.name) returning id into v_id;
+    select count(*) into n from public.tasks where folder_id = p_folder and deleted_at is null;
+    perform public.notify(p_to, 'transfer_request', null, f.name, me, jsonb_build_object('folder', true, 'count', n), v_id);
+    return 'requested';
+  end if;
+  perform public.do_transfer_folder(p_folder, p_to, me);
+  return 'moved';
+end $$;
+
+-- ---------- настройка общей папки: делает её администратор ----------
+create or replace function public.set_folder_shared(p_folder uuid, p_on boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid(); f public.folders;
+begin
+  select * into f from public.folders where id = p_folder for update;
+  if not found or f.owner_id <> me or not public.is_active() then raise exception 'Папка не найдена'; end if;
+  if f.kind <> 'user' then raise exception 'Служебную папку нельзя сделать общей'; end if;
+  if p_on then
+    if f.shared then return; end if;
+    if exists (select 1 from public.folder_transfers where folder_id = p_folder and status = 'pending')
+       or exists (select 1 from public.task_transfers tt join public.tasks t on t.id = tt.task_id where t.folder_id = p_folder and tt.status = 'pending') then
+      raise exception 'Папка или её задачи ждут согласия на передачу';
+    end if;
+    update public.folders set shared = true, hidden = false where id = p_folder;
+  else
+    if not f.shared then return; end if;
+    perform set_config('treker.bulk', 'on', true);
+    update public.prio_requests set status = 'cancelled', decided_at = now() where folder_id = p_folder and status = 'pending';
+    update public.tasks set assignee_id = owner_id, updated_at = now() where folder_id = p_folder and group_id is null and assignee_id is distinct from owner_id;
+    delete from public.folder_members where folder_id = p_folder;
+    -- Бывшая общая папка остаётся скрытой: задачи участников не должны вдруг стать видны всем.
+    update public.folders set shared = false, hidden = true where id = p_folder;
+    perform set_config('treker.bulk', 'off', true);
+  end if;
+end $$;
+
+create or replace function public.add_folder_member(p_folder uuid, p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid(); f public.folders; n int;
+begin
+  select * into f from public.folders where id = p_folder;
+  if not found or f.owner_id <> me or not f.shared or not public.is_active() then raise exception 'Папка не найдена или не общая'; end if;
+  if p_user = me then raise exception 'Вы и так администратор этой папки'; end if;
+  if not exists (select 1 from public.profiles where id = p_user and active) then raise exception 'Человек не найден или отключён'; end if;
+  insert into public.folder_members (folder_id, user_id) values (p_folder, p_user) on conflict do nothing;
+  if found then
+    select count(*) into n from public.tasks where folder_id = p_folder and deleted_at is null;
+    perform public.notify(p_user, 'moved', null, f.name, me, jsonb_build_object('folder', true, 'shared', true, 'count', n));
+  end if;
+end $$;
+
+-- Исключить участника (администратор) или выйти самому.
+create or replace function public.remove_folder_member(p_folder uuid, p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid(); f public.folders;
+begin
+  select * into f from public.folders where id = p_folder;
+  if not found or not f.shared or not public.is_active() then raise exception 'Папка не найдена или не общая'; end if;
+  if not (f.owner_id = me or p_user = me) then raise exception 'Исключать участников может только администратор папки'; end if;
+  if p_user = f.owner_id then raise exception 'Администратор не может выйти из своей папки'; end if;
+  delete from public.folder_members where folder_id = p_folder and user_id = p_user;
+  if not found then return; end if;
+  perform set_config('treker.bulk', 'on', true);
+  update public.tasks set assignee_id = f.owner_id, updated_at = now()
+    where folder_id = p_folder and group_id is null and assignee_id = p_user and deleted_at is null;
+  perform set_config('treker.bulk', 'off', true);
+  update public.prio_requests set status = 'cancelled', decided_at = now() where folder_id = p_folder and requester_id = p_user and status = 'pending';
+  perform public.notify(case when p_user = me then f.owner_id else p_user end, 'moved', null, f.name, me,
+    jsonb_build_object('folder', true, 'shared', true, 'removed', true, 'left', p_user = me));
+end $$;
+
+-- ---------- заявка на смену важности чужой задачи ----------
+create or replace function public.request_prio(p_task uuid, p_important boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid(); t public.tasks; f public.folders; v_id uuid;
+begin
+  select * into t from public.tasks where id = p_task for update;
+  if not found or t.deleted_at is not null or t.group_id is not null or t.folder_id is null then raise exception 'Задача не найдена'; end if;
+  select * into f from public.folders where id = t.folder_id and shared;
+  if not found or not public.folder_open(f.id) then raise exception 'Задача не найдена'; end if;
+  if me = f.owner_id or me = t.author_id then raise exception 'Свою важность можно менять сразу, без заявки'; end if;
+  if t.important is not distinct from p_important then raise exception 'У задачи уже такая важность'; end if;
+  if exists (select 1 from public.prio_requests where task_id = p_task and status = 'pending') then
+    raise exception 'По этой задаче уже есть заявка';
+  end if;
+  insert into public.prio_requests (task_id, folder_id, requester_id, want) values (p_task, f.id, me, p_important) returning id into v_id;
+  perform public.notify(f.owner_id, 'transfer_request', t.id, t.title, me,
+    jsonb_build_object('prio', true, 'want', p_important, 'folder_name', f.name), v_id);
+end $$;
+
+create or replace function public.respond_prio(p_request uuid, p_accept boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid(); r public.prio_requests; t public.tasks; f public.folders;
+begin
+  select * into r from public.prio_requests where id = p_request for update;
+  if not found then raise exception 'Заявка не найдена'; end if;
+  select * into f from public.folders where id = r.folder_id;
+  if not found or f.owner_id <> me then raise exception 'Заявка не найдена'; end if;
+  if r.status <> 'pending' then raise exception 'На эту заявку уже ответили'; end if;
+  select * into t from public.tasks where id = r.task_id;
+  if p_accept and t.deleted_at is null then
+    update public.tasks set important = r.want, updated_at = now() where id = t.id;
+  end if;
+  update public.prio_requests set status = case when p_accept then 'accepted' else 'declined' end, decided_at = now() where id = p_request;
+  update public.notifications set read_at = coalesce(read_at, now()),
+    data = data || jsonb_build_object('answer', case when p_accept then 'accepted' else 'declined' end)
+    where transfer_id = p_request and user_id = me;
+  perform public.notify(r.requester_id, case when p_accept then 'transfer_accepted' else 'transfer_declined' end, t.id, t.title, me,
+    jsonb_build_object('prio', true, 'want', r.want));
+end $$;
+
+create or replace function public.cancel_prio(p_request uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare r public.prio_requests;
+begin
+  select * into r from public.prio_requests where id = p_request for update;
+  if not found or r.requester_id <> auth.uid() then raise exception 'Заявка не найдена'; end if;
+  if r.status <> 'pending' then raise exception 'На эту заявку уже ответили'; end if;
+  update public.prio_requests set status = 'cancelled', decided_at = now() where id = p_request;
+  update public.notifications set data = data || '{"answer":"cancelled"}'::jsonb where transfer_id = p_request;
+end $$;
+
+revoke execute on function public.set_folder_shared(uuid, boolean), public.add_folder_member(uuid, uuid), public.remove_folder_member(uuid, uuid),
+  public.request_prio(uuid, boolean), public.respond_prio(uuid, boolean), public.cancel_prio(uuid) from public, anon;
+grant execute on function public.set_folder_shared(uuid, boolean), public.add_folder_member(uuid, uuid), public.remove_folder_member(uuid, uuid),
+  public.request_prio(uuid, boolean), public.respond_prio(uuid, boolean), public.cancel_prio(uuid) to authenticated;
+revoke execute on function public.move_task(uuid, uuid, uuid, uuid), public.transfer_folder(uuid, uuid) from public, anon;
+grant execute on function public.move_task(uuid, uuid, uuid, uuid), public.transfer_folder(uuid, uuid) to authenticated;

@@ -139,19 +139,26 @@ let ctxTask = null, pressT = null, pressAt = null, swallowClick = false;
 function ctxItems(t) {
   const rw = taskEditable(t), tr = pendingTransfer(t.id), it = (act, html, v = '', cls = '', checked) =>
     `<button type="button" class="menu-item${cls}" role="${checked === undefined ? 'menuitem' : 'menuitemradio'}"${checked === undefined ? '' : ` aria-checked="${checked}"`} data-ctx="${act}" data-v="${v}">${html}${checked ? `<span class="ck">${icon('check')}</span>` : ''}</button>`;
-  if (!rw) return it('open', `${icon('text')}Подробнее`) + (t.groupId || t.ownerId === state.me ? '' : `<div class="menu-label">Только просмотр</div>`);
-  let h = it('edit', `${icon('edit')}Изменить`) + labelHtml('Статус')
+  const sf = sharedOf(t), st = taskStatusable(t);
+  if (!rw && !st) return it('open', `${icon('text')}Подробнее`) + (t.groupId || t.ownerId === state.me ? '' : `<div class="menu-label">Только просмотр</div>`);
+  const pq = pendingPrio(t.id);
+  let h = (rw ? it('edit', `${icon('edit')}Изменить`) : it('open', `${icon('text')}Подробнее`)) + labelHtml('Статус')
     + STATUSES.map(s => it('status', `<span class="st-ic" data-s="${s.id}">${statusIcon(s.id)}</span>${s.label}`, s.id, '', t.status === s.id)).join('');
-  if (taskPrio(t)) h += labelHtml('Важность')
-    + it('prio', '<span class="pr-ic hi" aria-hidden="true"></span>Важно', 'hi', '', !!t.important)
-    + it('prio', '<span class="pr-ic lo" aria-hidden="true"></span>Потом', 'lo', '', !t.important);
-  if (t.groupId) {
-    const members = groupMembers(t.groupId);
-    h += labelHtml('Исполнитель') + members.map(u => it('assign', `${avatar(u)}<span class="nm">${u.id === state.me ? 'Себе' : esc(u.name)}</span>`, u.id, '', t.assigneeId === u.id)).join('')
+  if (taskPrio(t)) {
+    // Автор и администратор общей папки меняют важность сразу, остальные участники — заявкой.
+    const ask = taskPrioAsk(t);
+    h += labelHtml(ask ? 'Важность — заявка администратору' : 'Важность')
+      + (rw || ask ? it(ask ? 'prio-ask' : 'prio', '<span class="pr-ic hi" aria-hidden="true"></span>Важно', 'hi', '', !!t.important) : '')
+      + (rw || ask ? it(ask ? 'prio-ask' : 'prio', '<span class="pr-ic lo" aria-hidden="true"></span>Потом', 'lo', '', !t.important) : '')
+      + (ask && pq ? `<div class="menu-label">Заявка уже отправлена</div>` : '');
+  }
+  if (rw && (t.groupId || sf)) {
+    const people = sf ? folderPeople(sf.id) : groupMembers(t.groupId);
+    h += labelHtml('Исполнитель') + people.map(u => it('assign', `${avatar(u)}<span class="nm">${u.id === state.me ? 'Себе' : esc(u.name)}</span>`, u.id, '', t.assigneeId === u.id)).join('')
       + it('assign', `<span class="avatar" aria-hidden="true">–</span>Без исполнителя`, 'none', '', !t.assigneeId);
   }
-  h += '<div class="menu-sep" role="separator"></div>'
-    + (tr ? it('cancel-tr', `${icon('x')}Отменить передачу`) : it('move', `${icon('move')}Перенести…`))
+  if (rw) h += '<div class="menu-sep" role="separator"></div>'
+    + (tr ? it('cancel-tr', `${icon('x')}Отменить передачу`) : taskMovable(t) ? it('move', `${icon('move')}Перенести…`) : '')
     + it('del', `${icon('trash')}Удалить`, '', ' danger');
   return h;
 }
@@ -186,6 +193,7 @@ function taskAction(id, act, v, b) {
   if (act === 'edit') startEdit(id);
   else if (act === 'status') setStatus(id, v);
   else if (act === 'prio') setImportant(id, v === 'hi');
+  else if (act === 'prio-ask') askPrio(id, v === 'hi');
   else if (act === 'assign') transfer(id, v);
   else if (act === 'move') openMove(id);
   else if (act === 'cancel-tr') cancelTransfer(pendingTransfer(id)?.id, b);
@@ -203,13 +211,16 @@ function openFolderCtx(fid, x, y, byKey = false) {
       + (n ? it('give', `${icon('move')}Передать целиком…`) : '');
   } else {
     const f = folder(fid); if (!f) return;
+    // Чужая общая папка, где вы участник: только состав (и выход).
+    if (f.ownerId !== state.me) { showCtx(labelHtml(f.name) + it('share', `${icon('users')}Участники…`), x, y, byKey, (act, v, b) => folderAction(fid, act, b), 'Действия с папкой'); return; }
     const ft = pendingFolderTransfer(fid);
     html = labelHtml(f.name)
       + (f.kind === 'transfers' ? '' : it('rename', `${icon('edit')}Переименовать`))
-      + it('hide', `${icon(f.hidden ? 'eye' : 'eye-off')}${f.hidden ? 'Показать другим' : 'Скрыть от других'}`)
+      + (f.shared ? '' : it('hide', `${icon(f.hidden ? 'eye' : 'eye-off')}${f.hidden ? 'Показать другим' : 'Скрыть от других'}`))
       + prioItem(!!f.prio)
+      + (f.kind === 'transfers' ? '' : it('share', `${icon('users')}${f.shared ? 'Участники и доступ…' : 'Сделать общей…'}`))
       + (canMoveFolder(fid, -1) ? it('up', `${icon('up')}Выше`) : '') + (canMoveFolder(fid, 1) ? it('down', `${icon('down')}Ниже`) : '')
-      + (ft ? it('cancel-ft', `${icon('x')}Отменить передачу (${esc(user(ft.toId)?.name || '—')})`) : it('give', `${icon('move')}Передать папку целиком…`))
+      + (f.shared ? '' : ft ? it('cancel-ft', `${icon('x')}Отменить передачу (${esc(user(ft.toId)?.name || '—')})`) : it('give', `${icon('move')}Передать папку целиком…`))
       + (f.kind === 'transfers' ? '' : '<div class="menu-sep" role="separator"></div>' + it('del', `${icon('trash')}Удалить папку…`, ' danger'));
   }
   showCtx(html, x, y, byKey, (act, v, b) => folderAction(fid, act, b), 'Действия с папкой');
@@ -251,6 +262,7 @@ function folderAction(fid, act, b) {
   setPicker(false);
   if (act === 'rename') { openPage('folders'); const i = $(`#f-${fid}-name`); i?.focus(); i?.select(); }
   else if (act === 'give') openGiveFolder(fid);
+  else if (act === 'share') openShare(fid);
   else if (act === 'cancel-ft') cancelTransfer(pendingFolderTransfer(fid)?.id, b);
 }
 function closeCtx(focusTask) {

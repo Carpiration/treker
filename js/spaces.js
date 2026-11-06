@@ -28,6 +28,22 @@ async function moveFolder(fid, dir) {
   for (const [k, f] of l.entries()) if (f.sort !== (k + 1) * 10) await ops.patchFolder(f.id, { sort: (k + 1) * 10 });
 }
 const folder = id => state.db.folders.find(f => f.id === id);
+/* ---------- общие папки ----------
+   У общей папки есть администратор (владелец, f.ownerId) и участники (state.db.fmembers).
+   Задачи хранятся один раз у администратора и видны всем. Править и удалять — администратор и автор своей задачи;
+   статус меняет любой участник; важность чужой задачи участник меняет заявкой администратору. */
+const sharedOf = t => { const f = t.folderId && !t.groupId ? folder(t.folderId) : null; return f?.shared ? f : null; };
+const isFolderMember = (fid, uid = state.me) => state.db.fmembers.some(m => m.folderId === fid && m.userId === uid);
+// Люди общей папки: администратор и участники (только активные), вы — первым.
+const folderPeople = fid => {
+  const f = folder(fid); if (!f) return [];
+  return activeUsers().filter(u => u.id === f.ownerId || isFolderMember(fid, u.id))
+    .sort((a, b) => (b.id === state.me) - (a.id === state.me) || (b.id === f.ownerId) - (a.id === f.ownerId) || a.name.localeCompare(b.name, 'ru'));
+};
+// Общие папки, куда меня добавили (чужие), — показываются среди моих папок после собственных.
+const joinedFolders = () => state.db.folders.filter(f => f.shared && f.ownerId !== state.me && isFolderMember(f.id))
+  .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+const pendingPrio = taskId => state.db.prioReqs.find(r => r.taskId === taskId && r.status === 'pending');
 // «Без папки» можно переименовать (у каждого своё название).
 const rootName = (u = me()) => u?.rootName || 'Без папки';
 
@@ -48,13 +64,27 @@ function canWrite(info = cur()) {
   if (info.kind === 'group') return isAdmin() || isMember(info.id);
   return false;
 }
-const taskEditable = t => !t.deletedAt && (t.groupId ? isAdmin() || isMember(t.groupId) : t.ownerId === state.me);
+// Править, удалять, менять исполнителя и важность сразу: в общей папке — администратор и автор задачи.
+const taskEditable = t => {
+  if (t.deletedAt) return false;
+  const sf = sharedOf(t);
+  if (sf) return sf.ownerId === state.me || t.authorId === state.me;
+  return t.groupId ? isAdmin() || isMember(t.groupId) : t.ownerId === state.me;
+};
+// Менять статус: в общей папке — любой участник.
+const taskStatusable = t => !t.deletedAt && (taskEditable(t) || (!!sharedOf(t) && (sharedOf(t).ownerId === state.me || isFolderMember(t.folderId))));
+// Заявка администратору на смену важности чужой задачи.
+const taskPrioAsk = t => !taskEditable(t) && taskStatusable(t) && !!sharedOf(t);
+// Переносить из общей папки может только её администратор.
+const taskMovable = t => taskEditable(t) && (!sharedOf(t) || sharedOf(t).ownerId === state.me);
 // Запрос на передачу задачи администратору, который ещё ждёт ответа.
 const pendingTransfer = taskId => state.db.transfers.find(x => x.taskId === taskId && x.status === 'pending');
 
 // Задачи пространства без учёта фильтра — для счётчиков.
 function spaceTasks(info = cur()) {
-  return state.db.tasks.filter(t => !t.deletedAt && (info.kind === 'group' ? t.groupId === info.id : !t.groupId && t.ownerId === info.id));
+  const joined = info.kind === 'me' ? new Set(joinedFolders().map(f => f.id)) : null;
+  return state.db.tasks.filter(t => !t.deletedAt && (info.kind === 'group' ? t.groupId === info.id
+    : !t.groupId && (t.ownerId === info.id || (joined && joined.has(t.folderId)))));
 }
 function filterTasks(list, info = cur()) {
   if (info.kind === 'group') return state.who === 'all' ? list : list.filter(t => t.assigneeId === state.who);
@@ -146,8 +176,11 @@ function filterOptions(info = cur()) {
   const own = info.kind === 'me', owner = own ? me() : info.user;
   const opts = [{ v: 'all', label: 'Все задачи', icon: icon('list'), count: n(all) }];
   if (own || !owner.rootHidden) opts.push({ v: 'root', label: rootName(owner), icon: icon('inbox'), count: n(all.filter(t => !t.folderId)), eye: own ? 'root' : null, hidden: own && owner.rootHidden, prio: prioShown() && owner.rootPrio });
-  for (const f of userFolders(info.id)) opts.push({ v: f.id, label: f.name, icon: icon('folder'), count: n(all.filter(t => t.folderId === f.id)),
-    eye: own ? f.id : null, hidden: f.hidden, folder: own ? f.id : null, wait: own && pendingFolderTransfer(f.id), prio: prioShown() && f.prio });
+  for (const f of userFolders(info.id)) opts.push({ v: f.id, label: f.name, icon: icon(f.shared ? 'users' : 'folder'), count: n(all.filter(t => t.folderId === f.id)),
+    eye: own && !f.shared ? f.id : null, hidden: f.hidden && !f.shared, folder: own ? f.id : null, wait: own && pendingFolderTransfer(f.id), prio: prioShown() && f.prio, shared: f.shared });
+  // Общие папки, куда меня добавили: после собственных; без глаза (видны только участникам).
+  if (own) for (const f of joinedFolders()) opts.push({ v: f.id, label: f.name, icon: icon('users'), count: n(all.filter(t => t.folderId === f.id)),
+    folder: f.id, prio: prioShown() && f.prio, shared: true, joined: true });
   return opts;
 }
 function renderChips() {
@@ -208,7 +241,7 @@ $('#chips').addEventListener('click', e => {
   }
   const it = e.target.closest('[data-pick]'); if (!it) return;
   const v = it.dataset.pick, info = cur();
-  if (info.kind === 'group') { state.who = v; state.newAssignee = undefined; } else state.folder = v;
+  if (info.kind === 'group') { state.who = v; state.newAssignee = undefined; } else { state.folder = v; state.newAssignee = undefined; }
   state.editing = null; state.tapId = null; state.fpOpen = false; state.newFolder = false; state.newImportant = null;
   render();
   $('#fpBtn')?.focus({ preventScroll: true });
@@ -287,13 +320,30 @@ function assigneeItems(gid, current) {
   return groupMembers(gid).map(u => itemHtml(u.id, `${avatar(u)}<span class="nm">${u.id === state.me ? 'Себе' : esc(u.name)}</span>${n(u.id)}`, u.id === current)).join('')
     + itemHtml('none', `<span class="avatar" aria-hidden="true">–</span><span class="nm">Без исполнителя</span>`, !current);
 }
+// Исполнители задачи общей папки — её администратор и участники.
+function assigneeItemsFolder(fid, current) {
+  const tasks = state.db.tasks.filter(t => !t.deletedAt && t.folderId === fid);
+  const n = uid => { const c = activeCount(tasks.filter(t => t.assigneeId === uid)); return c ? `<span class="m-cnt" title="Активных задач">${c}</span>` : ''; };
+  return folderPeople(fid).map(u => itemHtml(u.id, `${avatar(u)}<span class="nm">${u.id === state.me ? 'Себе' : esc(u.name)}</span>${n(u.id)}`, u.id === current)).join('')
+    + itemHtml('none', `<span class="avatar" aria-hidden="true">–</span><span class="nm">Без исполнителя</span>`, !current);
+}
+// Открыта общая папка в «Моих задачах» — в поле новой задачи выбирается исполнитель из её людей.
+const composerShared = () => { const f = cur().kind === 'me' && state.folder !== 'all' && state.folder !== 'root' ? folder(state.folder) : null; return f?.shared ? f : null; };
 function defaultAssignee(info = cur()) {
   if (info.kind !== 'group') return state.me;
   if (state.who !== 'all') return state.who;
   return isMember(info.id) ? state.me : null;
 }
 function renderComposerAssign() {
-  const info = cur(), slot = $('#nAssignSlot');
+  const info = cur(), slot = $('#nAssignSlot'), sf = composerShared();
+  if (sf) {
+    slot.hidden = false;
+    if (state.newAssignee !== null && !folderPeople(sf.id).some(u => u.id === state.newAssignee)) state.newAssignee = state.me;
+    const a = user(state.newAssignee);
+    slot.innerHTML = menuHtml({ kind: 'new', cls: 'av-btn', btn: `${a ? avatar(a) : '<span class="avatar" aria-hidden="true">–</span>'}${icon('down', 'chev')}`,
+      label: `Кому: ${!a ? 'без исполнителя' : a.id === state.me ? 'себе' : a.name}`, items: assigneeItemsFolder(sf.id, state.newAssignee) });
+    return;
+  }
   if (info.kind !== 'group') { slot.innerHTML = ''; slot.hidden = true; return; }
   slot.hidden = false;
   if (state.newAssignee !== null && !groupMembers(info.id).some(u => u.id === state.newAssignee)) state.newAssignee = defaultAssignee(info);
@@ -305,7 +355,9 @@ function renderComposerAssign() {
 function newTaskPlace() {
   const info = cur();
   if (info.kind === 'group') return { groupId: info.id, ownerId: null, folderId: null, assigneeId: state.newAssignee ?? null };
-  const f = state.folder !== 'all' && state.folder !== 'root' ? state.folder : null;
+  const f = state.folder !== 'all' && state.folder !== 'root' ? state.folder : null, sf = composerShared();
+  // Общая папка: задача принадлежит администратору папки, исполнитель выбирается (по умолчанию вы).
+  if (sf) return { groupId: null, ownerId: sf.ownerId, folderId: sf.id, assigneeId: state.newAssignee === undefined ? state.me : state.newAssignee, important: newImportant() };
   return { groupId: null, ownerId: state.me, folderId: f, assigneeId: state.me, important: newImportant() };
 }
 // Важность новой задачи: выбранная на метке поля, иначе — по открытой вкладке («Потом» → потом); по умолчанию — «Важно».

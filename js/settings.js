@@ -51,6 +51,7 @@ const PAGES = {
   archive: { title: 'Архив', build: () => buildArchivePage() },
   move:    { title: 'Перенести задачу', build: () => buildMovePage() },
   give:    { title: 'Передать папку', build: () => buildGivePage() },
+  share:   { title: 'Общая папка', build: () => buildSharePage() },
 };
 const archiveCount = () => state.db.tasks.filter(t => t.deletedAt).length;
 function openPage(page) {
@@ -330,23 +331,28 @@ function buildFoldersPage() {
         ${icon(u.rootHidden ? 'eye-off' : 'eye')}<span class="sr-only">Видны другим</span></label>
       <span class="f-del-gap" aria-hidden="true"></span>
     </div>`;
+  const shareBtn = f => `<button type="button" class="f-ic f-share${f.shared ? ' on' : ''}" data-f-share="${f.id}" aria-label="${f.shared ? 'Общая папка: участники и доступ' : 'Сделать общей'}" title="${f.shared ? 'Общая папка: участники и доступ' : 'Сделать общей…'}">${icon(f.shared ? 'users' : 'folder')}</button>`;
+  const joined = joinedFolders();
   const rows = folders.map(f => `<div class="f-row" data-f="${f.id}">
       ${f.kind === 'transfers' ? '<span class="f-ord" aria-hidden="true"></span>' : `<span class="f-ord">
         <button type="button" class="f-mv" data-f-mv="-1:${f.id}" aria-label="Выше"${canMoveFolder(f.id, -1) ? '' : ' disabled'}>${icon('up')}</button>
         <button type="button" class="f-mv" data-f-mv="1:${f.id}" aria-label="Ниже"${canMoveFolder(f.id, 1) ? '' : ' disabled'}>${icon('down')}</button></span>`}
-      <span class="f-ic" aria-hidden="true">${icon('folder')}</span>
+      ${f.kind === 'transfers' ? `<span class="f-ic" aria-hidden="true">${icon('folder')}</span>` : shareBtn(f)}
       <form class="f-name" data-f-rename="${f.id}" novalidate><label class="sr-only" for="f-${f.id}-name">Название папки</label>
         <input class="input" id="f-${f.id}-name" value="${esc(f.name)}" maxlength="40" autocomplete="off"${f.kind === 'transfers' ? ' readonly title="Служебная папка: сюда приходят переданные вам задачи"' : ''}></form>
       <button type="button" class="icon-btn prio-tg${f.prio ? ' on' : ''}" data-f-prio="${f.id}" aria-pressed="${!!f.prio}" aria-label="Режим «Важно / Потом»" title="Режим «Важно / Потом»: ${f.prio ? 'включён' : 'выключен'}">${icon('flag')}</button>
-      <label class="eye-tg" title="${f.hidden ? 'Скрыта от других' : 'Видна другим'}"><input type="checkbox" class="sr-only" data-f-hide="${f.id}"${f.hidden ? '' : ' checked'}>
-        ${icon(f.hidden ? 'eye-off' : 'eye')}<span class="sr-only">Видна другим</span></label>
+      ${f.shared ? '<span class="f-del-gap" aria-hidden="true"></span>' : `<label class="eye-tg" title="${f.hidden ? 'Скрыта от других' : 'Видна другим'}"><input type="checkbox" class="sr-only" data-f-hide="${f.id}"${f.hidden ? '' : ' checked'}>
+        ${icon(f.hidden ? 'eye-off' : 'eye')}<span class="sr-only">Видна другим</span></label>`}
       ${f.kind === 'transfers' ? '' : state.confirmDel === f.id
         ? `<button type="button" class="btn sm danger-solid" data-f-del="${f.id}" title="Задачи перейдут в «${esc(rootName(u))}»">${icon('trash')}Удалить?</button>`
         : `<button type="button" class="icon-btn danger-ic" data-f-del="${f.id}" aria-label="Удалить папку" title="Удалить папку">${icon('trash')}</button>`}
     </div>`).join('');
   $('#stBody').innerHTML = `<section class="st-sec" aria-label="Мои папки">
-    <p class="hint">Папки — внутри «Мои задачи». Другие люди могут смотреть ваши задачи; скрытую папку не видит никто, даже администратор.</p>
+    <p class="hint">Значок слева от названия — общий доступ: можно сделать папку общей и добавить в неё людей. Папки — внутри «Мои задачи». Другие люди могут смотреть ваши задачи; скрытую папку не видит никто, даже администратор.</p>
     <div class="f-list">${rootRow}${rows}</div>
+    ${joined.length ? `<h3 class="st-sub">Общие папки, где вы участник</h3><div class="f-list">${joined.map(f => `<div class="f-row" data-f="${f.id}">
+      <span class="f-ord" aria-hidden="true"></span>${shareBtn(f)}
+      <span class="f-name f-ro"><span class="nm">${esc(f.name)}</span><span class="hint">администратор: ${esc(nick(f.ownerId))}</span></span></div>`).join('')}</div>` : ''}
     <p class="hint">Первая строка — задачи без папки: её можно переименовать, скрыть, включить режим и передать целиком (в меню папки).</p>
     <form class="inline" id="folderNew" novalidate>
       ${fieldHtml('fNewName', 'Новая папка', 'maxlength="40" autocomplete="off" placeholder="Например, Дом"')}
@@ -463,6 +469,7 @@ $('#stBody').addEventListener('click', e => {
   }
   const fm = e.target.closest('[data-f-mv]');
   if (fm) { const [d, id] = fm.dataset.fMv.split(':'); moveFolder(id, +d).then(() => { buildSettings(); $(`[data-f-mv="${d}:${id}"]:not([disabled])`)?.focus(); }); return; }
+  const fsh = e.target.closest('[data-f-share]'); if (fsh) return openShare(fsh.dataset.fShare);
   const fp = e.target.closest('[data-f-prio]'); if (fp) return toggleFolderPrio(fp.dataset.fPrio);
   const fd = e.target.closest('[data-f-del]');
   if (fd) {

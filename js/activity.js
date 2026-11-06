@@ -20,6 +20,7 @@ function placeText(groupId, ownerId, folderId) {
   if (groupId) return group(groupId) ? `группа ${quote(group(groupId).name)}` : 'группа';
   if (!ownerId) return '';
   const f = folderId && folder(folderId);
+  if (f?.shared) return `общая папка ${quote(f.name)}`;
   const who = ownerId === state.me ? 'Мои задачи' : `личные ${esc(user(ownerId)?.name || '—')}`;
   return f ? `${who} → ${quote(f.name)}` : who;
 }
@@ -38,6 +39,20 @@ $('#bellBtn').addEventListener('click', () => openPage('notes'));
 /* ---------- уведомления ---------- */
 function noteText(n) {
   const a = esc(nick(n.actorId)), d = n.data;
+  // Общие папки: заявка на смену важности и состав участников.
+  if (d.prio) {
+    const w = d.want ? 'Важно' : 'Потом';
+    switch (n.kind) {
+      case 'transfer_request': return d.answer === 'accepted' ? `Вы приняли заявку от ${a}: «${w}»` : d.answer === 'declined' ? `Вы отклонили заявку от ${a}: «${w}»`
+        : d.answer === 'cancelled' ? `${a} отозвал(а) заявку` : `${a} просит поставить «${w}»${d.folder_name ? ` · папка «${esc(d.folder_name)}»` : ''}`;
+      case 'transfer_accepted': return `${a} принял(а) вашу заявку: теперь «${w}»`;
+      case 'transfer_declined': return `${a} отклонил(а) вашу заявку «${w}»`;
+    }
+  }
+  if (d.folder && d.shared && n.kind === 'moved') {
+    const f = `общ${d.removed ? 'ей' : 'ую'} папк${d.removed ? 'и' : 'у'} ${quote(n.title)}`;
+    return d.removed ? (d.left ? `${a} вышел(ла) из ${f}` : `${a} убрал(а) вас из ${f}`) : `${a} добавил(а) вас в ${f}${d.count != null ? ` (задач: ${d.count})` : ''}`;
+  }
   // Папка целиком: в title — её название, в data.count — сколько задач.
   if (d.folder) {
     const f = `папку ${quote(n.title)}`, c = d.count != null ? ` (задач: ${d.count})` : '';
@@ -51,7 +66,7 @@ function noteText(n) {
   }
   switch (n.kind) {
     case 'assigned': return `${a} назначил(а) вам задачу`;
-    case 'status': return `${a}: статус → ${esc(statusOf(d.to).label)}`;
+    case 'status': return `${a}: статус → ${esc(statusOf(d.to).label)}${d.shared_name ? ` · общая папка ${quote(d.shared_name)}` : ''}`;
     case 'deleted': return `${a} удалил(а) вашу задачу`;
     case 'restored': return `${a} восстановил(а) вашу задачу`;
     case 'moved': return `${a} перенёс(ла) вашу задачу${d.to_group || d.to_folder ? ` в ${placeText(d.to_group, d.to_group ? null : state.me, d.to_folder)}` : ''}`;
@@ -73,7 +88,7 @@ function buildNotesPage() {
     const dl = dayLabel(n.createdAt);
     if (dl !== day) { day = dl; html += `<div class="day-h">${dl}</div>`; }
     const tr = n.kind === 'transfer_request' && !n.data.answer
-      && [...state.db.transfers, ...state.db.ftransfers].some(x => x.id === n.transferId && x.status === 'pending');
+      && [...state.db.transfers, ...state.db.ftransfers, ...state.db.prioReqs].some(x => x.id === n.transferId && x.status === 'pending');
     const open = n.taskId && state.db.tasks.some(t => t.id === n.taskId && !t.deletedAt);
     html += `<div class="ntf${!n.readAt || state.freshNotes?.has(n.id) ? ' new' : ''}">
       <span class="ntf-ic">${icon(NOTE_ICONS[n.kind] || 'bell')}</span>
@@ -98,11 +113,16 @@ function afterNotesOpen() {
 }
 
 async function answerTransfer(id, accept, btn) {
-  const isFolder = state.db.ftransfers.some(x => x.id === id);
+  const isFolder = state.db.ftransfers.some(x => x.id === id), isPrio = state.db.prioReqs.some(x => x.id === id);
   btnBusy(btn, true, accept ? 'Принимаем…' : 'Отклоняем…');
-  try { await backend.rpc('respond_transfer', { p_transfer: id, p_accept: accept }); await backend.reload(); }
+  try {
+    if (isPrio) await backend.rpc('respond_prio', { p_request: id, p_accept: accept });
+    else await backend.rpc('respond_transfer', { p_transfer: id, p_accept: accept });
+    await backend.reload();
+  }
   catch (e) { btnBusy(btn, false); toast(errText(e)); return; }
   render();
+  if (isPrio) { buildSettings(); toast(accept ? 'Заявка принята — важность изменена' : 'Заявка отклонена'); return; }
   toast(!accept ? 'Передача отклонена' : isFolder ? 'Папка принята — она в «Моих задачах»' : 'Задача принята — она в папке «Переданные»');
 }
 async function cancelTransfer(id, btn) {
@@ -115,7 +135,7 @@ async function cancelTransfer(id, btn) {
 function gotoTask(id) {
   const t = state.db.tasks.find(x => x.id === id && !x.deletedAt); if (!t) return;
   closeDlg($('#settings'));
-  state.space = t.groupId ? `g:${t.groupId}` : t.ownerId === state.me ? 'me' : `u:${t.ownerId}`;
+  state.space = t.groupId ? `g:${t.groupId}` : t.ownerId === state.me || sharedOf(t) ? 'me' : `u:${t.ownerId}`;
   state.folder = 'all'; state.who = 'all'; state.tapId = id;
   render({ flip: false });
   const el = $(`#list [data-task="${id}"]`);
@@ -329,7 +349,7 @@ $('#stBody').addEventListener('click', e => {
   const gv = e.target.closest('[data-give]'); if (gv && !gv.disabled) return giveFolder(gv.dataset.give);
   if (e.target.closest('[data-mv-back]')) { state.moveUser = null; buildMovePage(); return; }
   const mu = e.target.closest('[data-mv-user]'); if (mu) { state.moveUser = mu.dataset.mvUser; buildMovePage(); $('.mv')?.focus(); return; }
-  const mv = e.target.closest('.mv:not(:disabled)');
+  const mv = e.target.closest('.mv:not(:disabled):not([data-sh-add])');
   if (mv) doMove(mv, { group: mv.dataset.mvGroup || null, owner: mv.dataset.mvOwner || null, folder: mv.dataset.mvFolder || null });
 });
 $('#stBody').addEventListener('change', e => {

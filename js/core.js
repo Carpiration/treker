@@ -74,7 +74,7 @@ function btnBusy(btn, busy, text) {
 /* ---------- состояние ---------- */
 // hoverId — подробности под курсором, kbdId — под фокусом с клавиатуры, tapId — открыты касанием.
 let backend = null;
-const state = { db: { users: [], tasks: [], groups: [], members: [], folders: [], notes: [], transfers: [], ftransfers: [] }, me: null,
+const state = { db: { users: [], tasks: [], groups: [], members: [], folders: [], notes: [], transfers: [], ftransfers: [], fmembers: [], prioReqs: [] }, me: null,
   space: 'me', folder: 'all', who: 'all', newFolder: false, view: 'active',
   editing: null, hoverId: null, kbdId: null, tapId: null, newAssignee: undefined, newImportant: null, newImages: [], pending: false, pfOpen: null, flash: null,
   leaving: new Map() };  // задачи, улетающие в «Готовые»/«Активные»: id → куда

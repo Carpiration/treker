@@ -33,6 +33,19 @@ async function config(): Promise<Config> {
 const LABEL: Record<string, string> = { todo: 'Не начато', doing: 'В процессе', done: 'Готово' };
 function message(n: any, actor: string) {
   const t = `«${n.title}»`, d = n.data || {};
+  // Общие папки: заявка на важность и состав участников.
+  if (d.prio) {
+    const w = d.want ? 'Важно' : 'Потом';
+    switch (n.kind) {
+      case 'transfer_request': return { title: 'Заявка на важность', body: `${actor} просит поставить «${w}»: ${t}. Откройте, чтобы ответить.` };
+      case 'transfer_accepted': return { title: 'Заявка принята', body: `${actor} принял(а) заявку: ${t} → «${w}»` };
+      case 'transfer_declined': return { title: 'Заявка отклонена', body: `${actor} отклонил(а) заявку «${w}»: ${t}` };
+    }
+  }
+  if (d.folder && d.shared && n.kind === 'moved') {
+    if (d.removed) return { title: 'Общая папка', body: d.left ? `${actor} вышел(ла) из папки ${t}` : `${actor} убрал(а) вас из общей папки ${t}` };
+    return { title: 'Общая папка', body: `${actor} добавил(а) вас в общую папку ${t}` };
+  }
   if (d.folder) {
     const c = d.count != null ? ` (задач: ${d.count})` : '';
     switch (n.kind) {
@@ -44,7 +57,7 @@ function message(n: any, actor: string) {
   }
   switch (n.kind) {
     case 'assigned': return { title: 'Новая задача', body: `${actor} назначил(а) вам ${t}` };
-    case 'status': return { title: `Статус: ${LABEL[d.to] || d.to}`, body: `${actor} изменил(а) статус ${t}` };
+    case 'status': return { title: `Статус: ${LABEL[d.to] || d.to}`, body: `${actor} изменил(а) статус ${t}${d.shared_name ? ` · общая папка «${d.shared_name}»` : ''}` };
     case 'deleted': return { title: 'Задача удалена', body: `${actor} удалил(а) ${t}` };
     case 'restored': return { title: 'Задача восстановлена', body: `${actor} восстановил(а) ${t}` };
     case 'moved': return { title: 'Задача передана вам', body: `${actor} перенёс(ла) ${t}` };

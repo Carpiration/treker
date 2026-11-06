@@ -730,3 +730,17 @@ dialog.viewer::backdrop{background:transparent}
   .toast .timer{display:none}
 }
 @keyframes bm-pulse{50%{opacity:.45}}
+
+/* ---------- общие папки ---------- */
+button.f-ic{width:30px;height:30px;padding:0;border:0;border-radius:8px;background:none;color:var(--faint);cursor:pointer}
+button.f-ic:hover{background:var(--surface-4);color:var(--text)}
+button.f-share.on{color:var(--accent)}
+.f-name.f-ro{display:flex;flex-direction:column;flex:1;min-width:0;gap:1px;padding:4px 2px} .f-ro .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.st-sub{font-size:13px;font-weight:700;color:var(--muted);margin:14px 0 6px}
+.sh-list{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.sh-row{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:12px;background:var(--surface-3)}
+.sh-txt{display:flex;flex-direction:column;flex:1;min-width:0}
+.sh-rules{margin:12px 0;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.5}
+.sh-rules li{margin:3px 0}
+.t-pr.ask{cursor:pointer;outline:1px dashed color-mix(in srgb,var(--pr) 55%,transparent);outline-offset:-3px}
+.t-pr.wait{opacity:.6}

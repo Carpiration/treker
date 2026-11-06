@@ -21,19 +21,20 @@ function render(opts) {
 
 function taskHtml(t) {
   const editing = state.editing === t.id, open = openIds().has(t.id);
-  const rw = taskEditable(t), inGroup = !!t.groupId;
-  const showA = pref('showAssignee') && inGroup, a = user(t.assigneeId), author = user(t.authorId), s = statusOf(t.status);
-  const view = pref('statusView');
+  const rw = taskEditable(t), inGroup = !!t.groupId, sf = sharedOf(t), stRw = taskStatusable(t);
+  // В общей папке «чья задача» и статусы показываются всегда — независимо от настроек вида.
+  const showA = (pref('showAssignee') && inGroup) || !!sf, a = user(t.assigneeId), author = user(t.authorId), s = statusOf(t.status);
+  const view = sf && pref('statusView') === 'hide' ? 'pill' : pref('statusView');
   // Статус в строке: метка с текстом, цветной индикатор или ничего (меняется через меню задачи).
   const pill = view === 'dot' ? `<span class="dot" aria-hidden="true"></span><span class="sr-only">${s.label}</span>`
     : `${statusIcon(s.id)}<span class="lbl">${s.label}</span>`;
   const stCls = view === 'dot' ? 'st st-ind' : 'st';
-  const statusMenu = view === 'hide' ? '' : rw ? menuHtml({ kind: 'status', id: t.id, cls: stCls, attrs: `data-s="${s.id}" title="${s.label}"`, btn: pill, label: `Статус: ${s.label}. Изменить`,
+  const statusMenu = view === 'hide' ? '' : stRw ? menuHtml({ kind: 'status', id: t.id, cls: stCls, attrs: `data-s="${s.id}" title="${s.label}"`, btn: pill, label: `Статус: ${s.label}. Изменить`,
     items: STATUSES.map(x => itemHtml(x.id, `<span class="st-ic" data-s="${x.id}">${statusIcon(x.id)}</span>${x.label}`, x.id === s.id)).join('') })
     : `<span class="${stCls} ro" data-s="${s.id}" title="${s.label}">${pill}</span>`;
   const noA = '<span class="avatar" aria-hidden="true">–</span>';
   const assignMenu = !showA ? '' : rw ? menuHtml({ kind: 'assign', id: t.id, cls: 'av-btn', btn: a ? avatar(a) : noA,
-    label: `Исполнитель: ${t.assigneeId === state.me ? 'вы' : a?.name || 'нет'}. Передать задачу`, items: assigneeItems(t.groupId, t.assigneeId) })
+    label: `Исполнитель: ${t.assigneeId === state.me ? 'вы' : a?.name || 'нет'}. Передать задачу`, items: sf ? assigneeItemsFolder(sf.id, t.assigneeId) : assigneeItems(t.groupId, t.assigneeId) })
     : `<span class="av-btn ro">${a ? avatar(a) : noA}</span>`;
   const head = editing
     ? `<textarea class="t-title-input" id="et-${t.id}" rows="1" maxlength="200" autocomplete="off" aria-label="Название задачи" aria-describedby="et-${t.id}-err">${esc(t.title)}</textarea>`
@@ -42,12 +43,14 @@ function taskHtml(t) {
       view === 'hide' ? `<span class="sr-only">, ${s.label}</span>` : ''}</button>`;
   const meta = [
     showA ? (a ? `Исполнитель: ${esc(a.name)}` : 'без исполнителя') : '',
-    !inGroup && t.folderId && folder(t.folderId) && state.folder === 'all' ? `папка «${esc(folder(t.folderId).name)}»` : '',
+    !inGroup && t.folderId && folder(t.folderId) && (state.folder === 'all' || sf) ? `${sf ? 'общая папка' : 'папка'} «${esc(folder(t.folderId).name)}»` : '',
     `создал(а) ${esc(author?.name || '—')}, ${when(t.createdAt)}`,
     t.status === 'done' && t.doneAt ? `готово ${when(t.doneAt)}` : '',
   ].filter(Boolean).join(' · ');
-  const tr = pendingTransfer(t.id);
-  const trNote = tr ? `<div class="t-wait">${icon('clock')}Ждёт согласия: ${esc(user(tr.toId)?.name || '—')}</div>` : '';
+  const tr = pendingTransfer(t.id), pq = pendingPrio(t.id);
+  const trNote = tr ? `<div class="t-wait">${icon('clock')}Ждёт согласия: ${esc(user(tr.toId)?.name || '—')}</div>`
+    : pq ? `<div class="t-wait">${icon('clock')}${pq.requesterId === state.me ? `Заявка «${pq.want ? 'Важно' : 'Потом'}» ждёт ответа администратора` : `${esc(nick(pq.requesterId))} просит «${pq.want ? 'Важно' : 'Потом'}»`}${
+      pq.requesterId === state.me ? ` <button type="button" class="link" data-cancel-prio="${pq.id}">Отозвать</button>` : ''}</div>` : '';
   const more = editing ? `
       <div class="field-error" id="et-${t.id}-err" hidden></div>
       <label class="sr-only" for="ed-${t.id}">Описание</label>
@@ -63,13 +66,17 @@ function taskHtml(t) {
       ${rw || t.desc ? `<div class="t-actions">${rw ? `
         <button class="btn ghost sm" type="button" data-edit="${t.id}">${icon('edit')}Изменить</button>
         ${tr ? `<button class="btn ghost sm" type="button" data-cancel-tr="${tr.id}">${icon('x')}Отменить передачу</button>`
-          : `<button class="btn ghost sm" type="button" data-move="${t.id}">${icon('move')}Перенести</button>`}
+          : taskMovable(t) ? `<button class="btn ghost sm" type="button" data-move="${t.id}">${icon('move')}Перенести</button>` : ''}
         <button class="btn ghost sm danger" type="button" data-del="${t.id}">${icon('trash')}Удалить</button>` : ''}
         ${t.desc ? `<button class="icon-btn t-copy" type="button" data-copy="${t.id}" aria-label="Скопировать описание" title="Скопировать описание">${icon('copy')}</button>` : ''}
       </div>` : ''}`;
   // Метка важности слева (в папках с режимом «Важно / Потом»): нажатие переключает.
   const pr = taskPrio(t), prLbl = t.important ? 'Важно' : 'Потом';
-  const prHtml = !pr ? '' : rw
+  const prAsk = pr && taskPrioAsk(t);
+  const prHtml = !pr ? '' : prAsk
+    ? (pq ? `<span class="t-pr ro wait" title="Заявка «${pq.want ? 'Важно' : 'Потом'}» ждёт ответа администратора"><span>${prLbl}</span></span>`
+      : `<button type="button" class="t-pr ask" data-pr-ask="${t.id}" aria-label="${prLbl}. Попросить администратора сделать «${t.important ? 'Потом' : 'Важно'}»" title="${prLbl} — нажмите, чтобы попросить администратора папки сделать «${t.important ? 'Потом' : 'Важно'}»"><span>${prLbl}</span></button>`)
+    : rw
     ? `<button type="button" class="t-pr" data-pr="${t.id}" aria-label="${prLbl}. Сделать «${t.important ? 'Потом' : 'Важно'}»" title="${prLbl} — нажмите, чтобы сделать «${t.important ? 'Потом' : 'Важно'}»"><span>${prLbl}</span></button>`
     : `<span class="t-pr ro" title="${prLbl}"><span>${prLbl}</span></span>`;
   // Свёрнутая задача: изображения — ровной полоской внизу, под описанием (раскрытая показывает их после полного описания).
@@ -250,6 +257,14 @@ function setImportant(id, v) {
   ops.patchTask(id, { important: v });
   toast(leaves ? `Задача в «${VIEWS[to]}»` : v ? 'Отмечено: важно' : 'Отмечено: потом', () => setImportant(id, !v));
 }
+// Важность чужой задачи в общей папке: заявка администратору папки (он отвечает в колоколе).
+function askPrio(id, v) {
+  const t = state.db.tasks.find(x => x.id === id), sf = t && sharedOf(t);
+  if (!sf || !taskPrioAsk(t) || !!t.important === v) return;
+  if (pendingPrio(id)) { toast('По этой задаче уже есть заявка'); return; }
+  ops.requestPrio(id, v).then(okk => okk && toast(`Заявка отправлена администратору папки «${sf.name}»: «${v ? 'Важно' : 'Потом'}»`,
+    () => { const q = pendingPrio(id); if (q) ops.cancelPrio(q.id); }));
+}
 /* метка важности у поля новой задачи (видна в папке с режимом) */
 function renderComposerPrio() {
   const b = $('#nPrio'), on = viewPrio() && canWrite();
@@ -343,6 +358,9 @@ $('#list').addEventListener('click', e => {
   const cp = e.target.closest('[data-copy]'); if (cp) return copyDesc(cp.dataset.copy, cp);
   const pr = e.target.closest('[data-pr]');
   if (pr) { const t = state.db.tasks.find(x => x.id === pr.dataset.pr); return t && setImportant(t.id, !t.important); }
+  const ask = e.target.closest('[data-pr-ask]');
+  if (ask) { const t = state.db.tasks.find(x => x.id === ask.dataset.prAsk); return t && askPrio(t.id, !t.important); }
+  const cpq = e.target.closest('[data-cancel-prio]'); if (cpq) return ops.cancelPrio(cpq.dataset.cancelPrio).then(okk => okk && toast('Заявка отозвана'));
   const ed = e.target.closest('[data-edit]'); if (ed) return startEdit(ed.dataset.edit);
   const del = e.target.closest('[data-del]'); if (del) return removeTask(del.dataset.del);
   const mv = e.target.closest('[data-move]'); if (mv) return openMove(mv.dataset.move);
@@ -352,7 +370,8 @@ $('#list').addEventListener('click', e => {
   if (main) {
     const id = main.dataset.main;
     // Касание раскрывает подробности (наведения нет); клик мышью и Enter — сразу редактирование.
-    if (lastPointer === 'touch' && e.detail !== 0) { state.tapId = state.tapId === id ? null : id; applyPeek(); }
+    const mt = state.db.tasks.find(x => x.id === id);
+    if ((lastPointer === 'touch' && e.detail !== 0) || (mt && !taskEditable(mt))) { state.tapId = state.tapId === id ? null : id; applyPeek(); }
     else startEdit(id);
   }
 });
