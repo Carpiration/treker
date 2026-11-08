@@ -4,6 +4,8 @@ android/signing/
 android/build/
 *.apk
 *.idsig
+# Исключение: APK для сайта — он публикуется через GitHub Pages.
+!download/Treker.apk
 # Локальные файлы
 .env
 .env.*

@@ -135,7 +135,12 @@ def main():
         "--v4-signing-enabled", "false",  # .idsig нужен только для потоковой установки через adb
         "--out", apk, OUT / "app.aligned.apk", env=env)
     run(bt / f"apksigner{bat}", "verify", "--verbose", apk, env=env)
+    # Копия с постоянным именем — ее забирает GitHub Pages, ссылка на скачивание не меняется.
+    site = ROOT / "download" / "Treker.apk"
+    site.parent.mkdir(exist_ok=True)
+    shutil.copy(apk, site)
     print(f"\nГотово: {apk}  ({apk.stat().st_size // 1024} КБ)")
+    print(f"Для сайта: {site} — закоммитьте и запушьте, чтобы обновить ссылку на скачивание.")
 
 
 if __name__ == "__main__":

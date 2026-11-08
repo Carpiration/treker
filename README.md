@@ -3,7 +3,7 @@
 Общий список задач команды: кто что делает и в каком статусе. Тёмная тема, рассчитана на узкое
 (плавающее) окно на ПК и на телефон.
 
-**Сайт:** https://carpiration.github.io/treker/ · **Android:** APK в разделе Releases.
+**Сайт:** https://carpiration.github.io/treker/ · **Android:** [скачать APK](https://carpiration.github.io/treker/download/Treker.apk) (копия — в разделе Releases).
 
 ## Возможности
 - **Мои задачи** — личное пространство с папками. Другие могут их смотреть (без изменения); любую папку
