@@ -754,6 +754,8 @@ button.f-share.on{color:var(--accent)}
 .c-box:has(.c-due-btn:not([hidden])) .c-attach{padding-left:6px}
 /* срок в списке: отдельной строкой под названием */
 .t-due-row{padding:0 8px 8px}
+/* у задач с меткой «Важно / Потом» слева полоса: срок уходит в правый нижний угол, чтобы не налезать на неё */
+.task.has-pr .t-due-row{margin-left:22px;text-align:right}
 .t-due{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border:0;border-radius:999px;background:var(--surface-3);color:var(--muted);font-size:12px;font-weight:600;line-height:1;white-space:nowrap}
 button.t-due{cursor:pointer;transition:filter var(--t-fast)}
 button.t-due:hover{filter:brightness(1.18)}
